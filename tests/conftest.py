@@ -57,6 +57,15 @@ class Env:
     def inter(self, user, command=None):
         return FakeInteraction(self.client, self.guild, user, command)
 
+    async def pick(self, user, ranks):
+        """/pick with all ten rank fields: a title for each, and (leave empty) for an empty entry, so it
+        replaces the member's picks the way filling in a whole form would. Returns the interaction."""
+        from validation import CLEAR
+        values = ((list(ranks) + [""] * 10)[:10])
+        i = self.inter(user)
+        await self.user_cog.pick.callback(self.user_cog, i, *[v or CLEAR for v in values])
+        return i
+
     async def submit(self, inter, text):
         """Opens whatever form `inter` produced, 'types' text, and submits it as a fresh interaction.
         The ten-box ranked form takes one title per line (empty lines leave a box empty) and is
@@ -110,9 +119,7 @@ class Env:
         await self.start_season(TITLES)
         await self.weeks.event_template.callback(self.weeks, self.inter(self.admin), "Standard", None, "")
         for user in (self.alice, self.bob):
-            i = self.inter(user)
-            await self.user_cog.pick.callback(self.user_cog, i)
-            await self.submit(i, "\n".join(RESULTS))
+            await self.pick(user, RESULTS)
         await self.weeks.lock.callback(self.weeks, self.inter(self.admin))
         i = self.inter(self.admin)
         await self.weeks.end_week.callback(self.weeks, i, "")

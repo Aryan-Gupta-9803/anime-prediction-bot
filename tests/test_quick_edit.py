@@ -21,9 +21,7 @@ async def start_week(env, template="Standard"):
 
 
 async def full_pick(env, user, ranks=RESULTS):
-    i = env.inter(user)
-    await env.user_cog.pick.callback(env.user_cog, i)
-    await env.submit_ranked(i, ranks)
+    await env.pick(user, ranks)
 
 
 async def quick_pick(env, user, **fields):
@@ -167,12 +165,22 @@ def test_quick_edit_respects_locks_and_missing_events(env):
     run(scenario())
 
 
-def test_no_fields_still_opens_the_form_and_leftover_ballots_are_switched_off(env):
+def test_bare_pick_shows_current_picks_and_how_the_fields_work_and_leftover_ballots_are_switched_off(env):
     async def scenario():
         await start_week(env)
         i = env.inter(env.alice)
         await env.user_cog.pick.callback(env.user_cog, i)
-        assert i.modal is not None and not i.sent
+        assert i.modal is None and i.sent[-1].ephemeral and not env.picks.sent
+        guide = i.sent[-1].embed.description
+        assert "# Make your picks" in guide and "Your picks: Week 1" in guide and "You haven't picked yet." in guide
+        assert "`rank-1`" in guide and "(leave empty)" in guide and "/pick rank-3: Bleach" in guide
+        assert storage.get_prediction("week-1", str(env.alice.id)) is None, "asking for help must not save anything"
+
+        await full_pick(env, env.alice)
+        i = env.inter(env.alice)
+        await env.user_cog.pick.callback(env.user_cog, i)
+        guide = i.sent[-1].embed.description
+        assert all(f"{n} :: {t}" in guide for n, t in enumerate(RESULTS, 1)) and "haven't picked" not in guide
 
         await env.weeks.lock.callback(env.weeks, env.inter(env.admin))
         storage.create_ballot_event("week-2", "", [("Anime", 10)])      # left over from before ballots were removed
@@ -183,6 +191,37 @@ def test_no_fields_still_opens_the_form_and_leftover_ballots_are_switched_off(en
         out = env.inter(env.admin)
         await env.weeks.end_week.callback(env.weeks, out, "")
         assert "switched off" in out.all_text and out.modal is None
+    run(scenario())
+
+
+def test_bare_pick_says_where_carried_over_picks_came_from_and_drops_removed_titles(env):
+    async def scenario():
+        await start_week(env)
+        await full_pick(env, env.alice)
+        await env.weeks.lock.callback(env.weeks, env.inter(env.admin))
+        j = env.inter(env.admin)
+        await env.weeks.end_week.callback(env.weeks, j, "")
+        await env.submit(j, "\n".join(RESULTS))
+        await env.weeks.event_template.callback(env.weeks, env.inter(env.admin), "Standard", None, "")
+
+        i = env.inter(env.alice)
+        await env.user_cog.pick.callback(env.user_cog, i)
+        guide = i.sent[-1].embed.description
+        assert "Your picks: Week 2 (copied from week-1)" in guide and f"1 :: {RESULTS[0]}" in guide
+        await env.season.remove_anime.callback(env.season, env.inter(env.admin), "Bleach")
+        i = env.inter(env.alice)
+        await env.user_cog.pick.callback(env.user_cog, i)
+        assert "3 :: -" in i.sent[-1].embed.description, "a title that left the list is not carried over"
+
+        # the memory outlives a /reset
+        storage.reset_season()
+        await env.start_season(TITLES)
+        await env.weeks.event_template.callback(env.weeks, env.inter(env.admin), "Standard", None, "")
+        i = env.inter(env.alice)
+        await env.user_cog.pick.callback(env.user_cog, i)
+        assert "Your picks: Week 1 (copied from week-1)" in i.sent[-1].embed.description
+        out = await quick_pick(env, env.alice, rank_10="Vinland Saga")
+        assert "Saved" in out.all_text and saved(env, env.alice)[0] == RESULTS[0]
     run(scenario())
 
 

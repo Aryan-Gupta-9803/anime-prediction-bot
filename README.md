@@ -13,11 +13,12 @@ itself from the newest backup, and `/restore` lets a host roll back by hand.
    (below). The list and the rule are posted in announcements.
 3. **Open a week**: `/event-template` (saved points such as Standard 2/1), `/new-event` (custom points;
    `save_as` keeps them as a template).
-4. **Members `/pick`**: ten separate boxes over two steps (1-5, then 6-10), pre-filled with their current pick, or
-   their last picks from an earlier week. Or a quick edit: `/pick rank-3: Bleach` changes only that rank (see below).
-   Valid picks are posted in the picks channel and updated in place when changed. Picks are public by design.
+4. **Members `/pick`**: fill in the `rank-1` to `rank-10` fields (titles are suggested as you type). A rank you leave
+   out keeps the member's current pick, or their last picks from an earlier week, so `/pick rank-3: Bleach` changes
+   only that rank (see below). Valid picks are posted in the picks channel and updated in place when changed. Picks
+   are public by design.
 5. **`/lock`** when you're ready. Nothing closes automatically. `/unlock` undoes it.
-6. **`/end-week`**: enter the real top 10 in the same two-step form (or fix single ranks with the `rank-` fields). Everyone is scored;
+6. **`/end-week`**: enter the real top 10 in a two-step form (or fix single ranks with the `rank-` fields). Everyone is scored;
    results and season standings are posted, and a backup is saved. Run it again to correct a mistake.
 7. Repeat 3 to 6 each week.
 8. **`/end-season`** when the season is over: posts the full final leaderboard with the champion(s), locks everything
@@ -30,7 +31,7 @@ setup checklist (including backup status), the lifecycle, a command list and how
 
 | Command | Who | What |
 |---|---|---|
-| `/pick [rank-1 ... rank-10]` | anyone | Submit or change your picks: the form, or quick-edit single ranks |
+| `/pick [rank-1 ... rank-10]` | anyone | Submit or change your picks with the rank fields; with none filled in it shows your current picks |
 | `/my-score [week]` | anyone | Your points with a per-pick breakdown (private) |
 | `/leaderboard [week]` | anyone | Season or per-event standings with your rank (private) |
 | `/anime-list` | anyone | The titles you can pick from (private) |
@@ -45,7 +46,7 @@ setup checklist (including backup status), the lifecycle, a command list and how
 | `/set-points exact_points partial_points [week]` | host | Change a ranked week's scoring (then `/end-week` to re-score) |
 | `/list-templates` | host | Show saved scoring templates |
 | `/lock` `/unlock` | host | Close or reopen picks (posts a notice in announcements) |
-| `/end-week [week]` | host | Enter the real chart (same ten-box form), score everyone, post results, back up |
+| `/end-week [week]` | host | Enter the real chart (ten-box form or rank fields), score everyone, post results, back up |
 | `/end-season` | host | Post the final leaderboard, lock the season, stop new weeks (asks first if a week is unscored) |
 | `/backup` | host | Post a backup file to the backup channel right now |
 | `/restore [file]` | host | Replace all data from the newest backup, or from a file you attach (asks to confirm) |
@@ -56,18 +57,18 @@ setup checklist (including backup status), the lifecycle, a command list and how
 
 ### Validation
 
-Members' and hosts' forms work the same way. **A box may be left empty, but anything typed must be a title from the
-season list, and no title may appear twice.** If any filled box is wrong the whole submission is refused and nothing
-is saved (an earlier pick stays untouched); mistakes get a "Did you mean...?" hint and name the box. Matching ignores
-case, spacing, curly quotes and a leading `1.`. The first step is checked immediately, the halves are checked against
-each other at the end, and "Save, keep 6-10 as they are" skips the second form for small edits. A form needs at least
-one filled box.
+Members' rank fields and the host's results form follow the same rules. **A rank may be left empty, but anything
+filled in must be a title from the season list, and no title may appear twice.** If any filled field is wrong the whole
+submission is refused and nothing is saved (an earlier pick stays untouched); mistakes get a "Did you mean...?" hint and
+name the rank. Matching ignores case, spacing, curly quotes and a leading `1.`. At least one rank must remain filled.
+In the host's two-step results form the first step is checked immediately, the halves are checked against each other at
+the end, and "Save, keep 6-10 as they are" skips the second form for small edits.
 
 The host's real chart is held to the same rule, so a typo can't reach the leaderboard. If a title genuinely charted
 but isn't on the list, run `/add-anime` and then `/end-week` again. Empty chart spots are allowed (nobody can score on
 them) and are reported back.
 
-Discord allows at most five text boxes in one form, which is why ten boxes means two steps.
+Discord allows at most five text boxes in one form, which is why the results form has two steps.
 
 ### Quick edit
 
@@ -77,12 +78,13 @@ ranks you want to change and the rest keep their title, taken from the member's 
 if they haven't picked yet (for `/end-week`: the saved results). Placing a title that is already at another rank moves
 it and leaves the old rank empty; the private reply lists what changed and what moved. The same validation applies
 (every filled field must be a listed title, no repeats, at least one rank must remain), so a typo refuses the whole
-edit. With no fields, the commands open the form as before.
+edit. `/pick` with no fields shows the member's current picks and how the fields work; `/end-week` with no fields opens
+the two-step results form, pre-filled with the saved results.
 
 ### Remembered picks
 
-Each member's most recent picks are remembered, separately from the season, so the form opens pre-filled with them in
-a new week and after a `/reset`. Titles that are no longer on the list are left blank. This week's own pick always
+Each member's most recent picks are remembered, separately from the season, so a new week (and the week after a
+`/reset`) starts from them: any rank you leave out of `/pick` keeps that title. Titles that are no longer on the list are left blank. This week's own pick always
 wins over the remembered one.
 
 ### Scoring
@@ -170,7 +172,7 @@ python bot.py
 1. `/setup`, then `/help-admin`: everything under Setup status should read `[ok]` except the anime list.
 2. `/start` with 10 or more titles, then `/event-template Standard`.
 3. `/pick` with a deliberate typo (expect rejection), then correctly (expect a post in the picks channel).
-4. `/pick` again (form is pre-filled; the post should update, not duplicate), `/lock`, `/end-week`.
+4. `/pick rank-1: ...` again with just one field (the other ranks stay, and the post should update, not duplicate), `/lock`, `/end-week`.
 5. `/end-week` already posted a backup of the scored week to the backup channel; run `/backup` for another. `/help-admin` shows the last one.
 6. `/export` for the Excel copy, then `/reset` and `/restore` to see the round trip.
 

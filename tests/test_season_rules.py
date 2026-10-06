@@ -221,9 +221,7 @@ def test_a_minority_multiplier_season_end_to_end_posts_multipliers_and_shows_the
         tops = [["One Piece", FRIEREN, "Bleach"], ["One Piece", "Mob Psycho 100", "Bleach"],
                 ["One Piece", "Mob Psycho 100", "Bleach"]] + [["One Piece", "Mob Psycho 100", "86"]] * 3
         for user, top in zip(users, tops):
-            i = env.inter(user)
-            await env.user_cog.pick.callback(env.user_cog, i)
-            out = await env.submit_ranked(i, ten(*top))
+            out = await env.pick(user, ten(*top))
             assert "Saved" in out.all_text
         await env.weeks.lock.callback(env.weeks, env.inter(env.admin))
         j = env.inter(env.admin)

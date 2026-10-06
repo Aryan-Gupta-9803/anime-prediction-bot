@@ -221,14 +221,15 @@ class Weeks(commands.Cog):
             rule = season_rules.get_rule(await storage.aio.get_season_rule())
             if not season_rules.is_standard(rule):
                 lines.append(row("Season rule", rule.name))
-            if note:
-                lines.append(row("Note", esc(note)))
+            label = style.week_label(week_id)
+            greeting = f"Hello everyone! **{label}** predictions are open!"
             await channel.send(
-                content=f"Hello everyone! **{week_id}** predictions are open!",
+                content=f"{greeting}\n{esc(note)}" if note else greeting,      # the note sits above the embed
                 embed=style.embed(
-                    f"{week_id} predictions are open",
+                    f"{label} predictions are open",
                     ("Use /pick to submit your ranked top 10, with titles from /anime-list.", lines),
                 ),
+                allowed_mentions=discord.AllowedMentions.none(),                # a host's note never pings anyone
             )
 
         text = f"Started **{week_id}** ({week_type}): {exact_points} pts exact / {partial_points} pts wrong spot."

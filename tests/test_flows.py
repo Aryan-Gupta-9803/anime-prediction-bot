@@ -57,9 +57,11 @@ def test_full_ranked_week_lifecycle(env):
         i = env.inter(env.admin)
         await env.weeks.event_template.callback(env.weeks, i, "Standard", None, "picks close Sunday")
         assert "week-1" in i.all_text and "2 pts exact / 1 pts" in i.all_text
-        ann = env.announce.sent[-1][1]
-        assert "Scoring :: 2 pts for an exact spot, 1 pt if it's on the chart elsewhere" in ann.description and "Note :: picks close Sunday" in ann.description
-        assert ann.description.startswith("# week-1 predictions are open") and ann.colour.value == 0xE7CA4D
+        content, ann, _ = env.announce.sent[-1]
+        assert "Scoring :: 2 pts for an exact spot, 1 pt if it's on the chart elsewhere" in ann.description
+        assert "Note ::" not in ann.description and "picks close Sunday" not in ann.description
+        assert content == "Hello everyone! **Week 1** predictions are open!\npicks close Sunday", "the note goes above the embed"
+        assert ann.description.startswith("# Week 1 predictions are open") and ann.colour.value == 0xE7CA4D
         assert storage.get_rules("week-1") == {p: (2, 1) for p in range(1, 11)}
 
         # opening another while open is refused
@@ -70,9 +72,7 @@ def test_full_ranked_week_lifecycle(env):
         # alice: a typo disqualifies the whole submission and saves nothing
         bad = list(RESULTS)
         bad[1] = "Friren: Beyond Journeys End"
-        i = env.inter(env.alice)
-        await env.user_cog.pick.callback(env.user_cog, i)
-        out = await env.submit(i, "\n".join(bad))
+        out = await env.pick(env.alice, bad)
         assert "rejected" in out.all_text and "Did you mean 'Frieren: Beyond Journey's End'" in out.all_text
         assert storage.get_prediction("week-1", str(env.alice.id)) is None
         assert not env.picks.sent
@@ -80,54 +80,42 @@ def test_full_ranked_week_lifecycle(env):
         # alice submits properly, with list numbering and curly quotes (phone keyboard)
         good = [f"{n}. {t}" for n, t in enumerate(RESULTS, 1)]
         good[1] = "2. Frieren: Beyond Journey’s End"
-        i = env.inter(env.alice)
-        await env.user_cog.pick.callback(env.user_cog, i)
-        out = await env.submit(i, "\n".join(good))
+        out = await env.pick(env.alice, good)
         assert "Saved" in out.all_text and len(env.picks.sent) == 1
         first_msg_id = env.picks.sent[0][2].id
         stored = storage.get_prediction("week-1", str(env.alice.id))
         assert stored["rank2"] == "Frieren: Beyond Journey's End"          # canonical spelling saved
         assert stored["message_id"] == str(first_msg_id)
 
-        # resubmitting prefills the form and edits the same embed instead of posting again
+        # a bare /pick shows the current picks; resubmitting edits the same embed instead of posting again
         i = env.inter(env.alice)
         await env.user_cog.pick.callback(env.user_cog, i)
-        assert [b.default for b in i.modal.inputs] == stored_titles(stored)[:5]
+        assert i.modal is None and all(t in i.all_text for t in stored_titles(stored))
         swapped = list(RESULTS); swapped[0], swapped[1] = swapped[1], swapped[0]
-        out = await env.submit(i, "\n".join(swapped))
+        out = await env.pick(env.alice, swapped)
         assert len(env.picks.sent) == 1, "should edit in place, not post a second embed"
         first_row = next(l for l in env.picks.messages[first_msg_id].embed.description.splitlines() if l.startswith("1 ::"))
         assert first_row.endswith("Frieren: Beyond Journey's End")
 
         # a deleted embed is re-posted rather than crashing
         del env.picks.messages[first_msg_id]
-        i = env.inter(env.alice)
-        await env.user_cog.pick.callback(env.user_cog, i)
-        await env.submit(i, "\n".join(RESULTS))
+        await env.pick(env.alice, RESULTS)
         assert len(env.picks.sent) == 2
 
         # bob picks a numeric-looking title and a title that starts with digits + dot
         bob_pick = ["86", "2.43: Seiin High School Boys Volleyball Team"] + RESULTS[:8]
-        i = env.inter(env.bob)
-        await env.user_cog.pick.callback(env.user_cog, i)
-        out = await env.submit(i, "\n".join(bob_pick))
+        out = await env.pick(env.bob, bob_pick)
         assert "Saved" in out.all_text, out.all_text
         assert storage.get_prediction("week-1", str(env.bob.id))["rank2"].startswith("2.43")
 
-        # lock: late submissions are refused, including a form opened before the lock
-        late = env.inter(env.carol)
-        await env.user_cog.pick.callback(env.user_cog, late)
+        # lock: late submissions are refused
         i = env.inter(env.admin)
         await env.weeks.lock.callback(env.weeks, i)
         assert "2 submission" in i.all_text
         lock_post = env.announce.sent[-1][1].description
         assert lock_post.startswith("# week-1 is locked") and "Submissions :: 2" in lock_post
-        out = await env.submit(late, "\n".join(RESULTS))
-        assert "locked before you submitted" in out.all_text
-        assert storage.get_prediction("week-1", str(env.carol.id)) is None
-        i = env.inter(env.carol)
-        await env.user_cog.pick.callback(env.user_cog, i)
-        assert "locked" in i.all_text
+        out = await env.pick(env.carol, RESULTS)
+        assert "locked" in out.all_text and storage.get_prediction("week-1", str(env.carol.id)) is None
 
         # end-week: score + post
         i = env.inter(env.admin)
@@ -243,9 +231,7 @@ def test_setup_warns_about_missing_permissions_and_unreachable_channels(env):
         await env.start_season(TITLES)
         await env.weeks.event_template.callback(env.weeks, env.inter(env.admin), "Standard", None, "")
         env.client.channels.pop(weak.id)
-        i = env.inter(env.alice)
-        await env.user_cog.pick.callback(env.user_cog, i)
-        out = await env.submit(i, "\n".join(RESULTS))
+        out = await env.pick(env.alice, RESULTS)
         assert "can't reach the picks channel" in out.all_text
         assert storage.get_prediction("week-1", str(env.alice.id)) is None
     run(scenario())
@@ -257,9 +243,7 @@ def test_forbidden_picks_channel_and_unlock(env):
         await env.start_season(TITLES)
         await env.weeks.event_template.callback(env.weeks, env.inter(env.admin), "Standard", None, "")
         env.picks.forbid_send = True
-        i = env.inter(env.alice)
-        await env.user_cog.pick.callback(env.user_cog, i)
-        out = await env.submit(i, "\n".join(RESULTS))
+        out = await env.pick(env.alice, RESULTS)
         assert "not allowed to post" in out.all_text
         assert storage.get_prediction("week-1", str(env.alice.id)) is None
         env.picks.forbid_send = False
@@ -269,8 +253,8 @@ def test_forbidden_picks_channel_and_unlock(env):
         assert "already locked" in i.all_text
         i = env.inter(env.admin); await env.weeks.unlock.callback(env.weeks, i)
         assert "Reopened" in i.all_text
-        i = env.inter(env.alice); await env.user_cog.pick.callback(env.user_cog, i)
-        assert i.modal is not None
+        out = await env.pick(env.alice, RESULTS)
+        assert "Saved" in out.all_text, "picks work again after /unlock"
     run(scenario())
 
 
@@ -294,8 +278,7 @@ def test_help_and_help_admin_reflect_state_and_fit_discord_limits(env):
         await env.setup_channels()
         await env.start_season(TITLES)
         await env.weeks.event_template.callback(env.weeks, env.inter(env.admin), "Standard", None, "deadline Sunday")
-        i = env.inter(env.alice); await env.user_cog.pick.callback(env.user_cog, i)
-        await env.submit(i, "\n".join(RESULTS))
+        await env.pick(env.alice, RESULTS)
 
         i = env.inter(env.admin); await env.help.help_admin.callback(env.help, i)
         text = i.all_text
@@ -428,4 +411,30 @@ def test_overlong_replies_are_clipped(env):
         i = env.inter(env.admin)
         await reply(i, "y" * 5000)
         assert len(i.last.content) <= 2000
+    run(scenario())
+
+
+def test_week_announcement_says_week_n_and_keeps_a_note_above_the_embed_without_pinging(env):
+    async def scenario():
+        from style import week_label
+        assert [week_label(w) for w in ("week-1", "week-12", "week-x", "finale")] == ["Week 1", "Week 12", "week-x", "finale"]
+        await env.setup_channels()
+        await env.start_season(TITLES)
+        sent = []
+        original = env.announce.send
+
+        async def spy(*args, **kwargs):
+            sent.append(kwargs)
+            return await original(*args, **kwargs)
+        env.announce.send = spy
+
+        await env.weeks.event_template.callback(env.weeks, env.inter(env.admin), "Standard", None, "@everyone **bold**")
+        content = env.announce.sent[-1][0]
+        assert content.startswith("Hello everyone! **Week 1** predictions are open!\n") and "@everyone" in content
+        assert sent[-1]["allowed_mentions"].everyone is False and sent[-1]["allowed_mentions"].users is False
+
+        await env.weeks.lock.callback(env.weeks, env.inter(env.admin))
+        await env.weeks.event_template.callback(env.weeks, env.inter(env.admin), "Standard", None, "")
+        content, embed, _ = env.announce.sent[-1]
+        assert content == "Hello everyone! **Week 2** predictions are open!" and embed.description.startswith("# Week 2 ")
     run(scenario())

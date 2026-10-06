@@ -128,9 +128,7 @@ def test_scoring_a_week_backs_it_up_and_a_backup_failure_does_not_undo_the_scori
         # next week, with the backup channel unwritable: results are still saved and posted, with a heads-up
         env.backups_channel.forbid_send = True
         await env.weeks.event_template.callback(env.weeks, env.inter(env.admin), "Standard", None, "")
-        i = env.inter(env.alice)
-        await env.user_cog.pick.callback(env.user_cog, i)
-        await env.submit(i, "\n".join(RESULTS))
+        await env.pick(env.alice, RESULTS)
         await env.weeks.lock.callback(env.weeks, env.inter(env.admin))
         j = env.inter(env.admin)
         await env.weeks.end_week.callback(env.weeks, j, "")

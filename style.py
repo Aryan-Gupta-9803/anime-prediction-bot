@@ -13,6 +13,12 @@ def row(label, value) -> str:
     return f"{label} :: {value}"
 
 
+def week_label(week_id: str) -> str:
+    """'week-3' -> 'Week 3' for announcements; any other id is shown as it is."""
+    kind, _, number = str(week_id).partition("-")
+    return f"Week {number}" if kind == "week" and number.isdigit() else str(week_id)
+
+
 def pts(n) -> str:
     """'1 pt', '2 pts', '-1 pt', '1.5 pts'."""
     n = num(n)

@@ -107,8 +107,7 @@ class Help(commands.Cog):
                 "Click a field and start typing, and matching titles are suggested. Fill in as many as you like; a "
                 "rank you skip keeps your current pick (or stays empty if you have none).\n"
                 "To change just one later: `/pick rank-3: Bleach`. Choose `(leave empty)` to empty a rank.\n"
-                "Prefer boxes? `/pick` with no fields opens a short form instead: ten boxes over two steps "
-                "(1-5, then 6-10), filled in with your last picks."
+                "`/pick` with nothing filled in shows your current picks."
             ),
             inline=False,
         )
@@ -203,7 +202,7 @@ class Help(commands.Cog):
                 "`save_as` keeps them as a template).\n"
                 "2. Members use `/pick`; their picks appear in the picks channel.\n"
                 "3. `/lock` when you're ready. Nothing closes automatically.\n"
-                "4. `/end-week` enter the real top 10 in the same two-step form, or fix single ranks with the `rank-` fields "
+                "4. `/end-week` enter the real top 10 in a two-step form (1-5, then 6-10), or fix single ranks with the `rank-` fields "
                 "Titles "
                 "must be on the list: add a missing one with `/add-anime` first. It scores everyone and posts the "
                 "results and standings."

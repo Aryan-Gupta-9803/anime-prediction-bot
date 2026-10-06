@@ -1,4 +1,4 @@
-"""The ten-box ranked form, used for members' picks and for the host's real chart.
+"""The ten-box ranked form the host fills in at /end-week (members use the rank fields on /pick).
 
 Discord limits a form to 5 text boxes, so this is two linked forms (1-5, then 6-10). The first one
 is validated immediately; nothing is saved until the second step completes (or the member chooses

@@ -374,9 +374,7 @@ def test_set_points_changes_scoring_and_asks_for_a_rescore(env):
         assert "5 pts exact / 2 pts wrong spot" in i.all_text and "re-score" not in i.all_text
         assert storage.get_rules("week-1") == {p: (5, 2) for p in range(1, 11)}
 
-        j = env.inter(env.alice)
-        await env.user_cog.pick.callback(env.user_cog, j)
-        await env.submit(j, "\n".join(RESULTS))
+        await env.pick(env.alice, RESULTS)
         await env.weeks.lock.callback(env.weeks, env.inter(env.admin))
         k = env.inter(env.admin)
         await env.weeks.end_week.callback(env.weeks, k, "")
