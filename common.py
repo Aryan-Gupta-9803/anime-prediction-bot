@@ -5,6 +5,7 @@ from discord import app_commands
 
 import storage
 import style
+from validation import CLEAR
 
 log = logging.getLogger("predictionbot")
 
@@ -92,6 +93,46 @@ def season_totals(scores: list) -> tuple:
 async def week_autocomplete(interaction: discord.Interaction, current: str):
     weeks = [w for w in await storage.aio.list_weeks() if current.lower() in str(w["week_id"]).lower()]
     return [app_commands.Choice(name=f"{w['week_id']} ({w['type']})", value=w["week_id"]) for w in weeks][-25:]
+
+
+async def title_autocomplete(interaction: discord.Interaction, current: str):
+    """Suggests season titles as the member types (titles that start with what they typed come first),
+    plus the 'leave empty' choice for clearing a rank."""
+    needle = storage.normalize(current)
+    titles = await storage.aio.get_anime_list()
+    starts = [t for t in titles if storage.normalize(t).startswith(needle)]
+    contains = [t for t in titles if needle in storage.normalize(t) and t not in starts]
+    choices = [app_commands.Choice(name=t[:100], value=t[:100]) for t in starts + contains]
+    if not needle or needle in storage.normalize(CLEAR):
+        choices.insert(0, app_commands.Choice(name=CLEAR, value=CLEAR))
+    return choices[:25]
+
+
+def rank_options(blurb: str):
+    """Adds ten optional fields, rank-1 to rank-10, each with title suggestions, to a command that
+    takes parameters rank_1 ... rank_10."""
+    names = [f"rank_{i}" for i in range(1, 11)]
+
+    def decorate(func):
+        func = app_commands.rename(**{n: n.replace("_", "-") for n in names})(func)
+        func = app_commands.describe(**{n: f"{blurb} #{i}: start typing a title" for i, n in enumerate(names, start=1)})(func)
+        return app_commands.autocomplete(**{n: title_autocomplete for n in names})(func)
+
+    return decorate
+
+
+def given_ranks(*values) -> dict:
+    """{position: text} for the rank fields that were filled in."""
+    return {pos: v.strip() for pos, v in enumerate(values, start=1) if v and v.strip()}
+
+
+async def acknowledge(interaction: discord.Interaction, text: str, from_command: bool):
+    """Marks the interaction as answered before slow work: a button press edits its message, a slash
+    command just shows 'thinking' (the real answer follows as a private reply)."""
+    if from_command:
+        await interaction.response.defer(ephemeral=True)
+    else:
+        await interaction.response.edit_message(content=text, view=None)
 
 
 class ConfirmView(discord.ui.View):

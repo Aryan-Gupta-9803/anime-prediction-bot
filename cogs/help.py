@@ -104,10 +104,13 @@ class Help(commands.Cog):
             name="How to play",
             value=(
                 "1. `/anime-list` shows the titles you can pick from.\n"
-                "2. `/pick` opens a form. Ranked weeks: ten boxes over two steps (1-5, then 6-10), 1st place "
-                "first. You can leave boxes empty, but anything you type must be a title from the list, spelled "
-                "as there, with no repeats. Awards ballots: one `Category: Your guess` per line; skipping "
+                "2. `/pick` on its own opens a form. Ranked weeks: ten boxes over two steps (1-5, then 6-10), 1st "
+                "place first. You can leave boxes empty, but anything you type must be a title from the list, "
+                "spelled as there, with no repeats. Awards ballots: one `Category: Your guess` per line; skipping "
                 "categories is fine.\n"
+                "   **Quick edit:** fill in just the `rank-` fields you want to change, e.g. `/pick rank-3: Bleach` "
+                "(start typing and titles are suggested). Every other rank stays as it was, and `(leave empty)` "
+                "empties a rank.\n"
                 "3. A mistake rejects the whole submission and nothing is saved (an earlier pick of yours stays). "
                 "I'll point at what's wrong.\n"
                 "4. Your picks are posted in the picks channel and are public. Next time the form is pre-filled "
@@ -191,7 +194,8 @@ class Help(commands.Cog):
                 "`save_as` keeps them as a template). Awards ballot: `/new-ballot`.\n"
                 "2. Members use `/pick`; their picks appear in the picks channel.\n"
                 "3. `/lock` when you're ready. Nothing closes automatically.\n"
-                "4. `/end-week` enter the real top 10 in the same two-step form (or the ballot answers). Titles "
+                "4. `/end-week` enter the real top 10 in the same two-step form, or fix single ranks with the `rank-` fields "
+                "(or the ballot answers). Titles "
                 "must be on the list: add a missing one with `/add-anime` first. It scores everyone and posts the "
                 "results and standings."
             ),

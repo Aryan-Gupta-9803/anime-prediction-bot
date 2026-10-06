@@ -11,7 +11,10 @@ import storage
 from common import (
     ConfirmView,
     SafeModal,
+    acknowledge,
     get_text_channel,
+    given_ranks,
+    rank_options,
     ranking,
     reply,
     season_totals,
@@ -24,7 +27,7 @@ from permissions import is_admin
 from scoring import compute_ballot_score, compute_score
 from style import pts, row
 from textutil import chunk_lines
-from validation import parse_category_definitions, parse_category_pairs
+from validation import merge_rank_edits, parse_category_definitions, parse_category_pairs
 
 WEEK_TYPE_CHOICES = [
     app_commands.Choice(name="standard", value="standard"),
@@ -103,7 +106,9 @@ async def _post_results(client: discord.Client, week_id: str) -> bool:
 
 # ---- result entry --------------------------------------------------------------------------------------
 
-async def _finish_results(interaction: discord.Interaction, week_id: str, actual: list):
+async def _finish_results(
+    interaction: discord.Interaction, week_id: str, actual: list, from_command: bool = False, summary: str = ""
+):
     """Saves the validated real chart (empty spots allowed), scores everyone and posts the results."""
     if not storage.rules_complete(await storage.aio.get_rules(week_id)):
         await reply(
@@ -113,14 +118,14 @@ async def _finish_results(interaction: discord.Interaction, week_id: str, actual
         )
         return
 
-    await interaction.response.edit_message(content="Scoring...", view=None)
+    await acknowledge(interaction, "Scoring...", from_command)
     await storage.aio.save_result(week_id, actual)
     await storage.aio.set_week_locked(week_id, True)
     scored = await asyncio.to_thread(_score_week, week_id, actual)
     posted = await _post_results(interaction.client, week_id)
     backup_problem = await backup.try_backup(interaction.client, f"{week_id} scored")
 
-    lines = [f"Results saved and **{scored}** prediction(s) scored for {week_id}."]
+    lines = [f"Results saved and **{scored}** prediction(s) scored for {week_id}.{summary}"]
     empty = actual.count("")
     if empty:
         lines.append(f"{empty} chart spot(s) were left empty, so nobody can score on them. Run `/end-week` again to fill them in.")
@@ -507,14 +512,33 @@ class Weeks(commands.Cog):
     @is_admin()
     @app_commands.describe(week="Leave empty for the active event")
     @app_commands.autocomplete(week=week_autocomplete)
-    async def end_week(self, interaction: discord.Interaction, week: str = ""):
+    @rank_options("Real chart rank")
+    async def end_week(
+        self,
+        interaction: discord.Interaction,
+        week: str = "",
+        rank_1: str = "",
+        rank_2: str = "",
+        rank_3: str = "",
+        rank_4: str = "",
+        rank_5: str = "",
+        rank_6: str = "",
+        rank_7: str = "",
+        rank_8: str = "",
+        rank_9: str = "",
+        rank_10: str = "",
+    ):
         week_id = week or await storage.aio.get_current_week_id()
         wk = await storage.aio.get_week(week_id) if week_id else None
         if wk is None:
             await reply(interaction, "No such event. Pass a week id, or open one first.")
             return
 
+        given = given_ranks(rank_1, rank_2, rank_3, rank_4, rank_5, rank_6, rank_7, rank_8, rank_9, rank_10)
         if wk["type"] == "ballot":
+            if given:
+                await reply(interaction, "That event is an awards ballot, so the rank fields don't apply. Run `/end-week` with nothing filled in.")
+                return
             categories = await storage.aio.get_ballot_categories(week_id)
             if not categories:
                 await reply(interaction, f"{week_id} has no categories, so there is nothing to enter answers for.")
@@ -530,19 +554,31 @@ class Weeks(commands.Cog):
             )
             return
         existing = await storage.aio.get_results(week_id) or []
+        reject_prefix = (
+            "Results rejected, nothing was saved. (A title that really charted but isn't on the list needs "
+            "`/add-anime` first, then run `/end-week` again.)"
+        )
+
+        if given:
+            errors, canonical, notes = merge_rank_edits(existing, given, await storage.aio.get_anime_list())
+            if not errors and not any(canonical):
+                errors.append("Every rank would be empty. Fill in at least one.")
+            if errors:
+                await reply(interaction, reject_prefix + "\n" + "\n".join(f"- {e}" for e in errors))
+                return
+            summary = "\nChanged: " + ", ".join(f"#{p} {canonical[p - 1] or 'emptied'}" for p in sorted(given)) + "."
+            if existing and any(existing):
+                summary += " The other ranks stayed as saved."
+            if notes:
+                summary += "\n" + "\n".join(notes)
+            await _finish_results(interaction, week_id, canonical, from_command=True, summary=summary)
+            return
 
         async def finish(i: discord.Interaction, canonical: list):
             await _finish_results(i, week_id, canonical)
 
         form = RankedForm(
-            noun="Rank",
-            prefill=existing,
-            source_note="saved results",
-            reject_prefix=(
-                "Results rejected, nothing was saved. (A title that really charted but isn't on the list needs "
-                "`/add-anime` first, then run `/end-week` again.)"
-            ),
-            finish=finish,
+            noun="Rank", prefill=existing, source_note="saved results", reject_prefix=reject_prefix, finish=finish
         )
         await form.open_first(interaction)
 

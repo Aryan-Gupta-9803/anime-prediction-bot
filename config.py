@@ -29,7 +29,7 @@ BACKUP_CHANNEL_ID = _numeric_id("BACKUP_CHANNEL_ID", "the backup channel")
 
 DATA_DIR = os.environ.get("DATA_DIR", "data")
 os.environ["DATA_DIR"] = DATA_DIR
-ADMIN_ROLE_NAME = os.environ.get("ADMIN_ROLE_NAME", "Event Host")
+ADMIN_ROLE_NAME = os.environ.get("ADMIN_ROLE_NAME", "").strip() or "Event Host"   # a blank value means the default
 
 try:
     BACKUP_KEEP = max(5, int(os.environ.get("BACKUP_KEEP", "50")))

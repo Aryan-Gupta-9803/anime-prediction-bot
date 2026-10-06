@@ -13,8 +13,8 @@ itself from the newest backup, and `/restore` lets a host roll back by hand.
 3. **Open a week**: `/event-template` (saved points such as Standard 2/1), `/new-event` (custom points;
    `save_as` keeps them as a template), or `/new-ballot` (awards ballot).
 4. **Members `/pick`**: ten separate boxes over two steps (1-5, then 6-10), pre-filled with their current pick, or
-   their last picks from an earlier week. Valid picks are posted in the picks channel and updated in place when
-   changed. Picks are public by design.
+   their last picks from an earlier week. Or a quick edit: `/pick rank-3: Bleach` changes only that rank (see below).
+   Valid picks are posted in the picks channel and updated in place when changed. Picks are public by design.
 5. **`/lock`** when you're ready. Nothing closes automatically. `/unlock` undoes it.
 6. **`/end-week`**: enter the real top 10 in the same two-step form (or the ballot answers). Everyone is scored;
    results and season standings are posted, and a backup is saved. Run it again to correct a mistake.
@@ -29,7 +29,7 @@ setup checklist (including backup status), the lifecycle, a command list and how
 
 | Command | Who | What |
 |---|---|---|
-| `/pick` | anyone | Submit or change your picks (ten boxes in two steps; boxes may stay empty) |
+| `/pick [rank-1 ... rank-10]` | anyone | Submit or change your picks: the form, or quick-edit single ranks |
 | `/my-score [week]` | anyone | Your points with a per-pick breakdown (private) |
 | `/leaderboard [week]` | anyone | Season or per-event standings with your rank (private) |
 | `/anime-list` | anyone | The titles you can pick from (private) |
@@ -67,6 +67,16 @@ but isn't on the list, run `/add-anime` and then `/end-week` again. Empty chart 
 them) and are reported back.
 
 Discord allows at most five text boxes in one form, which is why ten boxes means two steps.
+
+### Quick edit
+
+`/pick` and `/end-week` also have ten optional fields, `rank-1` to `rank-10`. Click a field and start typing: matching
+titles are suggested (any part of the title, any case, 25 at a time) along with `(leave empty)`. Fill in only the
+ranks you want to change and the rest keep their title, taken from the member's pick this week, or their last picks
+if they haven't picked yet (for `/end-week`: the saved results). Placing a title that is already at another rank moves
+it and leaves the old rank empty; the private reply lists what changed and what moved. The same validation applies
+(every filled field must be a listed title, no repeats, at least one rank must remain), so a typo refuses the whole
+edit. With no fields, the commands open the form as before. Awards ballots don't use the rank fields.
 
 ### Remembered picks
 

@@ -11,6 +11,7 @@ os.environ.update(
     GUILD_ID="999000111222333444",
     BACKUP_CHANNEL_ID=str(BACKUP_CHANNEL),
     BACKUP_KEEP="5",
+    ADMIN_ROLE_NAME="Event Host",
     DATA_DIR=tempfile.mkdtemp(prefix="prediction-tests-"),
 )
 PROJECT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

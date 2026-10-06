@@ -8,8 +8,11 @@ from discord.utils import escape_markdown as esc
 import storage
 from common import (
     SafeModal,
+    acknowledge,
     get_text_channel,
+    given_ranks,
     post_or_edit_embed,
+    rank_options,
     ranking,
     reply,
     season_totals,
@@ -19,7 +22,7 @@ import style
 from style import pts, row
 from textutil import clip
 from forms import RankedForm
-from validation import parse_category_pairs, validate_ballot_pick
+from validation import merge_rank_edits, parse_category_pairs, validate_ballot_pick
 
 REJECTED = "Submission rejected, nothing was saved (any earlier pick of yours is unchanged):"
 
@@ -71,15 +74,18 @@ async def _publish(interaction, channel, existing_message_id, embed, save):
     return message_id
 
 
-async def _finish_picks(interaction: discord.Interaction, week_id: str, canonical: list):
-    """Saves a validated ten-slot pick (empty slots allowed) and posts/updates the member's embed."""
+async def _finish_picks(
+    interaction: discord.Interaction, week_id: str, canonical: list, from_command: bool = False, summary: str = ""
+):
+    """Saves a validated ten-slot pick (empty slots allowed) and posts/updates the member's embed.
+    `summary` is extra text for the private reply, e.g. what a quick edit changed."""
     if await _open_week_or_explain(interaction, week_id) is None:
         return
     channel = await _picks_channel_or_explain(interaction)
     if channel is None:
         return
 
-    await interaction.response.edit_message(content="Saving your picks...", view=None)
+    await acknowledge(interaction, "Saving your picks...", from_command)
     user_id = str(interaction.user.id)
     existing = await storage.aio.get_prediction(week_id, user_id)
     embed = style.embed(
@@ -98,7 +104,7 @@ async def _finish_picks(interaction: discord.Interaction, week_id: str, canonica
         await reply(
             interaction,
             f"Saved. [See your picks]({_jump_url(channel, message_id)}).{note} "
-            "You can change them until the host locks the week.",
+            f"You can change them until the host locks the week.{summary}",
         )
 
 
@@ -187,7 +193,22 @@ class UserCommands(commands.Cog):
         self.bot = bot
 
     @app_commands.command(name="pick", description="Submit or change your prediction for the active event")
-    async def pick(self, interaction: discord.Interaction):
+    @rank_options("Your pick for rank")
+    async def pick(
+        self,
+        interaction: discord.Interaction,
+        rank_1: str = "",
+        rank_2: str = "",
+        rank_3: str = "",
+        rank_4: str = "",
+        rank_5: str = "",
+        rank_6: str = "",
+        rank_7: str = "",
+        rank_8: str = "",
+        rank_9: str = "",
+        rank_10: str = "",
+    ):
+        """No fields: opens the form. Fields: a quick edit that only changes the ranks given."""
         week = await storage.aio.get_current_week()
         if week is None:
             await reply(interaction, "No event is open right now.")
@@ -197,24 +218,48 @@ class UserCommands(commands.Cog):
             return
 
         user_id = str(interaction.user.id)
+        given = given_ranks(rank_1, rank_2, rank_3, rank_4, rank_5, rank_6, rank_7, rank_8, rank_9, rank_10)
         if week["type"] == "ballot":
+            if given:
+                await reply(interaction, "This event is an awards ballot, so the rank fields don't apply. Run `/pick` with nothing filled in.")
+                return
             picks = await storage.aio.get_ballot_picks(week["week_id"], user_id)
             prefill = "\n".join(f"{p['category']}: {p['guess']}" for p in picks)
             await interaction.response.send_modal(BallotPickModal(week["week_id"], prefill))
-        else:
-            week_id = week["week_id"]
-            ranks, note = await _prefill_ranks(week_id, user_id, await storage.aio.get_anime_list())
+            return
 
-            async def precheck(i: discord.Interaction) -> bool:
-                return await _open_week_or_explain(i, week_id) is not None
+        week_id = week["week_id"]
+        titles = await storage.aio.get_anime_list()
+        ranks, note = await _prefill_ranks(week_id, user_id, titles)
 
-            async def finish(i: discord.Interaction, canonical: list):
-                await _finish_picks(i, week_id, canonical)
+        if given:
+            errors, canonical, notes = merge_rank_edits(ranks, given, titles)
+            if not errors and not any(canonical):
+                errors.append("Every rank would be empty. Fill in at least one.")
+            if errors:
+                await reply(interaction, REJECTED + "\n" + "\n".join(f"- {e}" for e in errors))
+                return
+            changed = [f"#{pos} {'emptied' if not canonical[pos - 1] else esc(canonical[pos - 1])}" for pos in sorted(given)]
+            kept = sum(1 for pos in range(1, 11) if pos not in given and canonical[pos - 1])
+            where = f" ({note})" if note else ""
+            summary = "\nChanged: " + ", ".join(changed) + "."
+            if kept:
+                summary += f" Kept {kept} other rank(s) from your {'current picks' if not note else 'last picks'}{where}."
+            if notes:
+                summary += "\n" + "\n".join(notes)
+            await _finish_picks(interaction, week_id, canonical, from_command=True, summary=summary)
+            return
 
-            form = RankedForm(
-                noun="Rank", prefill=ranks, source_note=note, reject_prefix=REJECTED, finish=finish, precheck=precheck
-            )
-            await form.open_first(interaction)
+        async def precheck(i: discord.Interaction) -> bool:
+            return await _open_week_or_explain(i, week_id) is not None
+
+        async def finish(i: discord.Interaction, canonical: list):
+            await _finish_picks(i, week_id, canonical)
+
+        form = RankedForm(
+            noun="Rank", prefill=ranks, source_note=note, reject_prefix=REJECTED, finish=finish, precheck=precheck
+        )
+        await form.open_first(interaction)
 
     @app_commands.command(name="my-score", description="See how you scored (only you can see this)")
     @app_commands.describe(week="Leave empty for the active event")

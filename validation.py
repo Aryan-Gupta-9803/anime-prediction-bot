@@ -53,6 +53,43 @@ def validate_slots(entries: list, valid_titles: list, first_pos: int = 1, noun: 
     return errors, canonical
 
 
+CLEAR = "(leave empty)"
+
+
+def is_clear(text: str) -> bool:
+    """True for the 'empty this rank' choice that every rank field suggests (a lone '-' works too)."""
+    return normalize(text) in (normalize(CLEAR), "-")
+
+
+def merge_rank_edits(base: list, given: dict, valid_titles: list, noun: str = "Rank"):
+    """Applies a quick edit to a member's existing ten ranks.
+
+    `base` is what they have now (ten entries, '' for empty); `given` maps a position 1-10 to the text
+    they typed for it (CLEAR empties that rank). Ranks they didn't touch keep their title, except that
+    a title they just placed somewhere else moves, leaving its old rank empty.
+
+    Returns (errors, canonical, notes): any error means the whole edit is refused, notes describe moves.
+    """
+    entries = [""] * 10
+    for pos, text in given.items():
+        entries[pos - 1] = "" if is_clear(text) else text
+    errors, explicit = validate_slots(entries, valid_titles, 1, noun)
+    placed = {normalize(t): pos for pos, t in enumerate(explicit, start=1) if t and pos in given}
+
+    canonical, notes = [], []
+    for pos in range(1, 11):
+        if pos in given:
+            canonical.append(explicit[pos - 1])
+            continue
+        title = base[pos - 1] if pos <= len(base) else ""
+        new_pos = placed.get(normalize(title)) if title else None
+        if new_pos is not None:
+            notes.append(f"'{title}' moved from {noun.lower()} #{pos} to #{new_pos}, so #{pos} is now empty.")
+            title = ""
+        canonical.append(title)
+    return errors, canonical, notes
+
+
 def parse_category_pairs(raw: str):
     """Parses 'Category: guess' lines. Returns (pairs, errors) where pairs is a list of
     (category, guess). A line with nothing after the colon is skipped (category left blank)."""
