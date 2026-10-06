@@ -5,6 +5,7 @@ from discord import app_commands
 from discord.ext import commands
 
 import backup
+import season_rules
 import storage
 import style
 from common import (
@@ -47,7 +48,9 @@ async def _event_status(week) -> str:
     else:
         state = "**locked**: waiting for the host to enter results"
 
-    text = f"**{week_id}** ({kind}) is {state}.\nScoring: {scoring}.\n{count} member(s) have submitted."
+    rule = season_rules.get_rule(await storage.aio.get_season_rule())
+    extra = "" if season_rules.is_standard(rule) else f"\nSeason rule: **{rule.name}** (see below)."
+    text = f"**{week_id}** ({kind}) is {state}.\nScoring: {scoring}.{extra}\n{count} member(s) have submitted."
     if week.get("note"):
         text += f"\nNote: {week['note']}"
     return text
@@ -82,6 +85,7 @@ class Help(commands.Cog):
     async def help_cmd(self, interaction: discord.Interaction):
         week = await storage.aio.get_current_week()
         ended = await storage.aio.season_ended()
+        rule = season_rules.get_rule(await storage.aio.get_season_rule())
         embed = style.embed(
             "Weekly anime chart predictions",
             (
@@ -120,6 +124,8 @@ class Help(commands.Cog):
             ),
             inline=False,
         )
+        if not season_rules.is_standard(rule):
+            embed.add_field(name=f"Season rule: {rule.name}", value=clip(rule.explain, 1024), inline=False)
         embed.add_field(
             name="Commands",
             value=(
@@ -151,6 +157,7 @@ class Help(commands.Cog):
             return f"[ok] {label} {channel.mention}"
 
         anime = await storage.aio.get_anime_list()
+        rule = season_rules.get_rule(await storage.aio.get_season_rule())
         templates = await storage.aio.list_templates()
         week = await storage.aio.get_current_week()
 
@@ -159,6 +166,7 @@ class Help(commands.Cog):
             await channel_status("user_channel_id", "Picks", REQUIRED_PICKS_PERMS),
             await _backup_status(interaction.client, me),
             f"[ok] Anime list: {len(anime)} titles" if anime else "[todo] Anime list is empty. Run `/start`.",
+            f"[ok] Season rule: {rule.name}" if anime else "[todo] Season rule: choose one with `/start`.",
             f"[ok] Scoring templates: {len(templates)}" if templates else "[todo] No scoring templates (use `/new-event`).",
         ]
         if await storage.aio.season_ended():
@@ -180,7 +188,7 @@ class Help(commands.Cog):
             name="Once per season (about every 3 months)",
             value=(
                 "1. `/setup` pick the announcements and picks channels (once).\n"
-                "2. `/start` paste the season's titles, one per line (10 or more). Posted in announcements.\n"
+                "2. `/start` paste the season's titles, one per line (10 or more), and optionally choose a season rule (e.g. Minority Multiplier). Both are posted in announcements.\n"
                 "3. Run the weekly flow below.\n"
                 "4. `/end-season` posts the final leaderboard and closes the season.\n"
                 "5. `/reset` posts a backup file, then clears it; then `/start` again. Channels and templates "

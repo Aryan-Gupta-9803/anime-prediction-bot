@@ -43,6 +43,13 @@ def chunk_lines(lines: list, limit: int = 3800) -> list:
     return pages
 
 
+def num(value):
+    """A points value as a whole number when it is one, otherwise a float (a score can be 7.5 under a
+    multiplier rule). Keeps '5' from showing up as '5.0'."""
+    value = float(value)
+    return int(value) if value == int(value) else value
+
+
 def clip(text: str, limit: int) -> str:
     text = str(text)
     return text if len(text) <= limit else text[: limit - 3] + "..."

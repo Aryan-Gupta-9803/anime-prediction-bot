@@ -3,7 +3,7 @@ a gold accent bar, a large heading, a bold subheading, and `label :: value` rows
 """
 import discord
 
-from textutil import chunk_lines
+from textutil import chunk_lines, num
 
 ACCENT = discord.Colour(0xE7CA4D)   # the gold bar on the server's existing embeds
 PAGE_LIMIT = 3500                   # room left for the heading inside Discord's 4096 cap
@@ -14,8 +14,9 @@ def row(label, value) -> str:
 
 
 def pts(n) -> str:
-    """'1 pt', '2 pts', '-1 pt'."""
-    return f"{n} pt" if str(n) in ("1", "-1") else f"{n} pts"
+    """'1 pt', '2 pts', '-1 pt', '1.5 pts'."""
+    n = num(n)
+    return f"{n} pt" if n in (1, -1) else f"{n} pts"
 
 
 def embed(title: str, *sections, footer: "str | None" = None) -> discord.Embed:

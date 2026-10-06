@@ -19,7 +19,7 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
-from textutil import normalize
+from textutil import normalize, num
 
 SCHEMA_VERSION = 1
 RANK_COLS = [f"rank{i}" for i in range(1, 11)]
@@ -208,6 +208,15 @@ def get_config(key: str, default=None):
 def set_config(key: str, value):
     with _tx() as conn:
         _set_config(conn, key, value)
+
+
+def get_season_rule() -> str:
+    """Key of the season's scoring rule (set by /start); 'standard' when none was chosen."""
+    return get_config("season_rule", "") or "standard"
+
+
+def set_season_rule(key: str):
+    set_config("season_rule", key)
 
 
 # ---- Anime list ----------------------------------------------------------------------------------------
@@ -436,7 +445,7 @@ def replace_scores(week_id: str, entries: list):
         conn.executemany(
             "INSERT INTO scores(week_id, user_id, username, points, breakdown_json, computed_at) "
             "VALUES (?, ?, ?, ?, ?, ?)",
-            [(week_id, str(e["user_id"]), e["username"], int(e["points"]), json.dumps(e["breakdown"]), stamp)
+            [(week_id, str(e["user_id"]), e["username"], num(e["points"]), json.dumps(e["breakdown"]), stamp)
              for e in entries],
         )
 
@@ -447,9 +456,10 @@ def list_scores(week_id: "str | None" = None) -> list:
     return _q("SELECT * FROM scores WHERE week_id = ? ORDER BY rowid", (week_id,))
 
 
-def score_points(record: dict) -> int:
+def score_points(record: dict):
+    """A stored score as a number (a whole number unless it has a half point)."""
     try:
-        return int(float(record.get("points", 0)))
+        return num(record.get("points", 0))
     except (TypeError, ValueError):
         return 0
 
@@ -554,6 +564,7 @@ def reset_season():
             conn.execute(f"DELETE FROM {table}")
         _set_config(conn, "current_week_id", "")
         _set_config(conn, "season_ended", "")
+        _set_config(conn, "season_rule", "")
 
 
 # ---- Backups ---------------------------------------------------------------------------------------------------------

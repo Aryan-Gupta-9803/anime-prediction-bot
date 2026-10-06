@@ -9,7 +9,8 @@ itself from the newest backup, and `/restore` lets a host roll back by hand.
 ## How a season runs
 
 1. **`/setup`** (once): pick the announcements channel and the picks channel.
-2. **`/start`**: paste the season's anime titles (10 or more, one per line). They're posted in announcements.
+2. **`/start [rule]`**: paste the season's anime titles (10 or more, one per line) and optionally choose a season rule
+   (below). The list and the rule are posted in announcements.
 3. **Open a week**: `/event-template` (saved points such as Standard 2/1), `/new-event` (custom points;
    `save_as` keeps them as a template).
 4. **Members `/pick`**: ten separate boxes over two steps (1-5, then 6-10), pre-filled with their current pick, or
@@ -36,7 +37,7 @@ setup checklist (including backup status), the lifecycle, a command list and how
 | `/help` | anyone | How to play and what's open right now |
 | `/help-admin` | host | Setup checklist, lifecycle, commands, fixing mistakes |
 | `/setup` | host | Choose announcements and picks channels; warns about missing bot permissions |
-| `/start` | host | New season: paste the valid titles (refused if a season is already running) |
+| `/start [rule]` | host | New season: paste the valid titles and optionally pick a season rule (refused if a season is already running) |
 | `/add-anime` `/remove-anime` | host | Adjust the title list mid-season |
 | `/event-template template [type] [note]` | host | Open a week with a saved scoring template |
 | `/new-event exact_points partial_points [type] [note] [save_as]` | host | Open a week with custom scoring |
@@ -93,6 +94,19 @@ Summer 2026 sheet:
 |---|---|---|
 | Standard | 2 | 1 |
 | First Week Advantage | 5 | 2 |
+
+### Season rules
+
+`/start` takes an optional **rule** that applies to every week of that season (`/reset` clears it). It's announced with
+the list, shown on each week's announcement and in `/help`, and used whenever a week is scored or re-scored. Rules live
+in `season_rules.py`: add a scoring function and one entry in `RULES` and it appears in `/start` by itself.
+
+**Minority Multiplier** (the first one): for the real top 3, each title gets a multiplier from how few players had it in
+their ten (anywhere). 40% of players or more: 1x. Only one player: 4x. In between it slides in a straight line, rounded to
+the nearest 0.5x; with 10 players that is 1 player 4x, 2 players 3x, 3 players 2x, 4 or more 1x. The multiplier applies to the points a player earns on that title (exact or wrong spot) and is not rounded, so a
+score can have a half point (a 1-point wrong-spot match at 1.5x is 1.5). It never touches penalties or titles outside the top 3. Weeks with fewer than 5 players have no multipliers.
+The results post lists each top-3 title's multiplier, and `/my-score` shows it on the rows it changed. The knobs
+(`MAX_MULTIPLIER`, `CROWD_SHARE`, `MIN_PLAYERS`) are at the top of the minority section in `scoring.py`.
 
 Not built: the joker weeks, the unused "RESERVED" upper/lower-half idea from the original workbook, and (switched off
 for now) the awards ballot. The ballot's storage and scoring code is still in the project so old backups restore and

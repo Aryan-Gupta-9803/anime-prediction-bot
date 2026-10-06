@@ -5,6 +5,7 @@ from discord import app_commands
 
 import storage
 import style
+from textutil import num
 from validation import CLEAR
 
 log = logging.getLogger("predictionbot")
@@ -87,7 +88,7 @@ def season_totals(scores: list) -> tuple:
         uid = str(s["user_id"])
         totals[uid] = totals.get(uid, 0) + storage.score_points(s)
         names[uid] = s["username"]
-    return totals, names
+    return {uid: num(total) for uid, total in totals.items()}, names
 
 
 async def week_autocomplete(interaction: discord.Interaction, current: str):

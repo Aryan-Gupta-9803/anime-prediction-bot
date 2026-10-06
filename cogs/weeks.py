@@ -19,10 +19,10 @@ from common import (
     send_paged,
     week_autocomplete,
 )
+import season_rules
 import style
 from forms import RankedForm
 from permissions import is_admin
-from scoring import compute_score
 from style import pts, row
 from textutil import chunk_lines
 from validation import merge_rank_edits
@@ -35,14 +35,19 @@ WEEK_TYPE_CHOICES = [
 
 # ---- scoring (blocking; always run via asyncio.to_thread) -------------------------------------------
 
-def _score_week(week_id: str, actual: list) -> int:
+def _score_week(week_id: str, actual: list):
+    """Scores every prediction under the season's rule. Returns (how many were scored, notes for the
+    results post such as the minority multipliers)."""
     rules = storage.get_rules(week_id)
-    entries = []
-    for p in storage.list_predictions(week_id):
-        total, breakdown = compute_score(storage.prediction_ranks(p), actual, rules)
-        entries.append({"user_id": p["user_id"], "username": p["username"], "points": total, "breakdown": breakdown})
+    rule = season_rules.get_rule(storage.get_season_rule())
+    predictions = storage.list_predictions(week_id)
+    results, notes = rule.score([storage.prediction_ranks(p) for p in predictions], actual, rules)
+    entries = [
+        {"user_id": p["user_id"], "username": p["username"], "points": total, "breakdown": breakdown}
+        for p, (total, breakdown) in zip(predictions, results)
+    ]
     storage.replace_scores(week_id, entries)
-    return len(entries)
+    return len(entries), notes
 
 
 # ---- announcements -------------------------------------------------------------------------------------
@@ -55,7 +60,7 @@ def _leaderboard_lines(totals: dict, names: dict, limit: int = 15) -> list:
     return lines
 
 
-async def _post_results(client: discord.Client, week_id: str) -> bool:
+async def _post_results(client: discord.Client, week_id: str, notes: list = ()) -> bool:
     """Posts the week's results and standings to the announcement channel."""
     channel = await get_text_channel(client, "announcement_channel_id")
     if channel is None:
@@ -70,7 +75,11 @@ async def _post_results(client: discord.Client, week_id: str) -> bool:
 
     actual = await storage.aio.get_results(week_id) or []
     top10 = [row(i, esc(t) if t else "-") for i, t in enumerate(actual, start=1)]
-    await channel.send(content=greeting, embed=style.embed(title, ("Actual top 10", top10), ("Leaderboard", board)))
+    sections = [("Actual top 10", top10)]
+    if notes:
+        rule = season_rules.get_rule(await storage.aio.get_season_rule())
+        sections.append((rule.name, [row(f"**{esc(label)}**", text) for label, text in notes]))
+    await channel.send(content=greeting, embed=style.embed(title, *sections, ("Leaderboard", board)))
 
     all_scores = await storage.aio.list_scores()
     if len({s["week_id"] for s in all_scores}) > 1:
@@ -96,8 +105,8 @@ async def _finish_results(
     await acknowledge(interaction, "Scoring...", from_command)
     await storage.aio.save_result(week_id, actual)
     await storage.aio.set_week_locked(week_id, True)
-    scored = await asyncio.to_thread(_score_week, week_id, actual)
-    posted = await _post_results(interaction.client, week_id)
+    scored, notes = await asyncio.to_thread(_score_week, week_id, actual)
+    posted = await _post_results(interaction.client, week_id, notes)
     backup_problem = await backup.try_backup(interaction.client, f"{week_id} scored")
 
     lines = [f"Results saved and **{scored}** prediction(s) scored for {week_id}.{summary}"]
@@ -209,6 +218,9 @@ class Weeks(commands.Cog):
                 row("Type", week_type),
                 row("Scoring", f"{pts(exact_points)} for an exact spot, {pts(partial_points)} if it's on the chart elsewhere"),
             ]
+            rule = season_rules.get_rule(await storage.aio.get_season_rule())
+            if not season_rules.is_standard(rule):
+                lines.append(row("Season rule", rule.name))
             if note:
                 lines.append(row("Note", esc(note)))
             await channel.send(

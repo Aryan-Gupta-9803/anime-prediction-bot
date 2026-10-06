@@ -4,16 +4,18 @@ import io
 from openpyxl import Workbook
 from openpyxl.styles import Font
 
+from textutil import num
+
 
 def _standings(tables: dict) -> list:
     headers, rows = tables["scores"]
     user, name, points = headers.index("user_id"), headers.index("username"), headers.index("points")
     totals, names = {}, {}
     for row in rows:
-        totals[row[user]] = totals.get(row[user], 0) + int(row[points])
+        totals[row[user]] = totals.get(row[user], 0) + float(row[points])
         names[row[user]] = row[name]
     ordered = sorted(totals.items(), key=lambda kv: (-kv[1], names[kv[0]]))
-    return [(rank, names[uid], pts) for rank, (uid, pts) in enumerate(ordered, start=1)]
+    return [(rank, names[uid], num(pts)) for rank, (uid, pts) in enumerate(ordered, start=1)]
 
 
 def _write(ws, headers: list, rows: list):

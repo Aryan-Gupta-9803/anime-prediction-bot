@@ -129,7 +129,8 @@ def _breakdown_lines(raw: str) -> list:
         return []
     lines = []
     for r in rows:
-        lines.append(row(r["position"], f"{esc(r['predicted']) or '-'} — {pts(r['points'])} ({r['reason']})"))
+        bonus = f" x{r['multiplier']:g}" if r.get("multiplier") else ""
+        lines.append(row(r["position"], f"{esc(r['predicted']) or '-'} — {pts(r['points'])} ({r['reason']}{bonus})"))
     return lines
 
 

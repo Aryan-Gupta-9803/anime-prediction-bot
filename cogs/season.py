@@ -15,6 +15,8 @@ from common import (
     reply,
     send_paged,
 )
+import season_rules
+import style
 from permissions import is_admin
 from style import row
 from validation import parse_lines
@@ -29,6 +31,10 @@ class StartModal(SafeModal, title="Season anime list"):
         max_length=4000,
     )
 
+    def __init__(self, rule_key: str = season_rules.STANDARD_KEY):
+        super().__init__()
+        self.rule_key = rule_key
+
     async def on_submit(self, interaction: discord.Interaction):
         titles = [t[:100] for t in parse_lines(self.entries.value)]
         distinct = {storage.normalize(t) for t in titles}
@@ -42,6 +48,8 @@ class StartModal(SafeModal, title="Season anime list"):
 
         await interaction.response.defer(ephemeral=True)
         saved = await storage.aio.replace_anime_list(titles)
+        await storage.aio.set_season_rule(self.rule_key)
+        rule = season_rules.get_rule(self.rule_key)
         dropped = len(titles) - saved
 
         notes = []
@@ -57,9 +65,12 @@ class StartModal(SafeModal, title="Season anime list"):
                 subheading="Pick from these titles with /pick. See them again any time with /anime-list.",
                 content="Hello everyone! The **new season** is here, and these are the anime you can predict!",
             )
+            if not season_rules.is_standard(rule):
+                await channel.send(embed=style.embed(f"Season rule: {rule.name}", (None, [rule.explain])))
 
         text = f"Season started with **{saved}** titles"
         text += f" ({dropped} duplicate line(s) ignored)." if dropped else "."
+        text += f" Season rule: **{rule.name}**."
         text += (
             " Open the first week with `/event-template` or `/new-event`. "
             "Missed a title or made a typo? Use `/add-anime` / `/remove-anime`."
@@ -113,9 +124,11 @@ class Season(commands.Cog):
             text += "\n\nFix these permissions before opening a week:\n" + "\n".join(problems)
         await reply(interaction, text)
 
-    @app_commands.command(name="start", description="Start a new season: set the valid anime list and announce it")
+    @app_commands.command(name="start", description="Start a new season: set the valid anime list and the season rule")
     @is_admin()
-    async def start(self, interaction: discord.Interaction):
+    @app_commands.describe(rule="Special scoring for the whole season (leave empty for normal scoring)")
+    @app_commands.choices(rule=[app_commands.Choice(name=r.name, value=r.key) for r in season_rules.RULES.values()])
+    async def start(self, interaction: discord.Interaction, rule: app_commands.Choice[str] = None):
         if not await storage.aio.get_config("announcement_channel_id"):
             await reply(interaction, "Run `/setup` first so I know which channels to use.")
             return
@@ -127,7 +140,7 @@ class Season(commands.Cog):
                 "to adjust the list, or `/reset` to archive this season and start a new one.",
             )
             return
-        await interaction.response.send_modal(StartModal())
+        await interaction.response.send_modal(StartModal(rule.value if rule else season_rules.STANDARD_KEY))
 
     @app_commands.command(name="add-anime", description="Add one anime to the current season's valid list")
     @is_admin()
