@@ -1,5 +1,4 @@
 import asyncio
-from collections import defaultdict
 
 import discord
 from discord import app_commands
@@ -10,7 +9,6 @@ import backup
 import storage
 from common import (
     ConfirmView,
-    SafeModal,
     acknowledge,
     get_text_channel,
     given_ranks,
@@ -24,10 +22,10 @@ from common import (
 import style
 from forms import RankedForm
 from permissions import is_admin
-from scoring import compute_ballot_score, compute_score
+from scoring import compute_score
 from style import pts, row
 from textutil import chunk_lines
-from validation import merge_rank_edits, parse_category_definitions, parse_category_pairs
+from validation import merge_rank_edits
 
 WEEK_TYPE_CHOICES = [
     app_commands.Choice(name="standard", value="standard"),
@@ -43,20 +41,6 @@ def _score_week(week_id: str, actual: list) -> int:
     for p in storage.list_predictions(week_id):
         total, breakdown = compute_score(storage.prediction_ranks(p), actual, rules)
         entries.append({"user_id": p["user_id"], "username": p["username"], "points": total, "breakdown": breakdown})
-    storage.replace_scores(week_id, entries)
-    return len(entries)
-
-
-def _score_ballot(week_id: str) -> int:
-    categories = storage.get_ballot_categories(week_id)
-    picks_by_user, names = defaultdict(list), {}
-    for p in storage.get_ballot_picks(week_id):
-        picks_by_user[p["user_id"]].append(p)
-        names[p["user_id"]] = p["username"]
-    entries = []
-    for user_id, user_picks in picks_by_user.items():
-        total, breakdown = compute_ballot_score(user_picks, categories)
-        entries.append({"user_id": user_id, "username": names[user_id], "points": total, "breakdown": breakdown})
     storage.replace_scores(week_id, entries)
     return len(entries)
 
@@ -84,18 +68,9 @@ async def _post_results(client: discord.Client, week_id: str) -> bool:
     title = f"Results are in: {week_id}" + (f" ({week['type']})" if week else "")
     greeting = f"Hello everyone! The **{week_id}** results are in!"
 
-    if week and week["type"] == "ballot":
-        categories = await storage.aio.get_ballot_categories(week_id)
-        answers = [
-            row(f"**{esc(c['category'])}** ({pts(c['points'])})", esc(c["correct_answer"]) or "not judged")
-            for c in categories
-        ]
-        await channel.send(content=greeting, embed=style.embed(title, ("Leaderboard", board)))
-        await send_paged(channel, f"Correct answers: {week_id}", answers)
-    else:
-        actual = await storage.aio.get_results(week_id) or []
-        top10 = [row(i, esc(t) if t else "-") for i, t in enumerate(actual, start=1)]
-        await channel.send(content=greeting, embed=style.embed(title, ("Actual top 10", top10), ("Leaderboard", board)))
+    actual = await storage.aio.get_results(week_id) or []
+    top10 = [row(i, esc(t) if t else "-") for i, t in enumerate(actual, start=1)]
+    await channel.send(content=greeting, embed=style.embed(title, ("Actual top 10", top10), ("Leaderboard", board)))
 
     all_scores = await storage.aio.list_scores()
     if len({s["week_id"] for s in all_scores}) > 1:
@@ -134,100 +109,6 @@ async def _finish_results(
     if backup_problem:
         lines.append(f"The backup after scoring didn't go through: {backup_problem}")
     await reply(interaction, "\n".join(lines))
-
-
-class BallotResultsModal(SafeModal, title="Enter the correct answers"):
-    entries = discord.ui.TextInput(
-        label="One per line: Category: Correct answer",
-        style=discord.TextStyle.paragraph,
-        required=True,
-        max_length=4000,
-    )
-
-    def __init__(self, week_id: str, prefill: str = ""):
-        super().__init__()
-        self.week_id = week_id
-        self.entries.default = prefill[: self.entries.max_length] or None
-
-    async def on_submit(self, interaction: discord.Interaction):
-        pairs, parse_errors = parse_category_pairs(self.entries.value)
-        await interaction.response.defer(ephemeral=True)
-
-        applied, unknown = await storage.aio.set_ballot_correct_answers(self.week_id, pairs)
-        await storage.aio.set_week_locked(self.week_id, True)
-        scored = await asyncio.to_thread(_score_ballot, self.week_id)
-
-        categories = await storage.aio.get_ballot_categories(self.week_id)
-        unjudged = [c["category"] for c in categories if not c["correct_answer"].strip()]
-        skipped = parse_errors + [f"'{c}' isn't a category on this event" for c in unknown]
-
-        lines = [f"Recorded {applied} answer(s) and scored **{scored}** participant(s) for {self.week_id}."]
-        if skipped:
-            lines.append(
-                "Skipped these lines. Run `/end-week` again with just the corrected lines; answers you already "
-                "entered are kept, and I'll post the leaderboard once nothing is skipped:\n"
-                + "\n".join(f"- {s}" for s in skipped)
-            )
-        else:
-            posted = await _post_results(interaction.client, self.week_id)
-            if not posted:
-                lines.append("I couldn't post to the announcement channel. Check `/setup` and my permissions.")
-        if unjudged:
-            lines.append(f"Still without an answer ({len(unjudged)}): " + ", ".join(unjudged))
-        await reply(interaction, "\n".join(lines))
-
-
-class BallotCategoriesModal(SafeModal, title="Define awards ballot categories"):
-    entries = discord.ui.TextInput(
-        label="One per line: Category | Points",
-        style=discord.TextStyle.paragraph,
-        placeholder="Anime | 10\nMovie | 8\nBoy | 5\n...",
-        required=True,
-        max_length=4000,
-    )
-
-    def __init__(self, event_name: str, note: str):
-        super().__init__()
-        self.event_name = event_name
-        self.note = note
-
-    async def on_submit(self, interaction: discord.Interaction):
-        categories, errors = parse_category_definitions(self.entries.value)
-        if errors or not categories:
-            await reply(
-                interaction,
-                "Couldn't create the ballot, nothing was saved:\n"
-                + "\n".join(f"- {e}" for e in (errors or ["No categories found."])),
-            )
-            return
-
-        await interaction.response.defer(ephemeral=True)
-        # Re-check: another host may have opened a week while this form was open.
-        current = await storage.aio.get_current_week()
-        if current and not storage.week_is_locked(current):
-            await reply(interaction, f"**{current['week_id']}** was opened in the meantime. Lock or end it first.")
-            return
-
-        week_id = await storage.aio.next_week_id()
-        await storage.aio.create_ballot_event(week_id, self.note, categories)
-
-        channel = await get_text_channel(interaction.client, "announcement_channel_id")
-        posted = channel is not None
-        if channel is not None:
-            lines = [row("Note", esc(self.note))] if self.note else []
-            lines += [row(f"**{esc(name)}**", pts(points)) for name, points in categories]
-            await send_paged(
-                channel,
-                f"{week_id}: {esc(self.event_name)}",
-                lines,
-                subheading="Use /pick to guess as `Category: Your guess`, one per line. Blank categories are fine.",
-                content="Hello everyone! A new **awards ballot** is open!",
-            )
-
-        text = f"Started ballot **{week_id}: {self.event_name}** with {len(categories)} categories."
-        if not posted:
-            text += " I couldn't post the announcement. Check `/setup` and my permissions."
-        await reply(interaction, text)
 
 
 # ---- commands ---------------------------------------------------------------------------------------------
@@ -421,29 +302,11 @@ class Weeks(commands.Cog):
         if wk is None:
             await reply(interaction, "No such event. Pass a week id, or open one first.")
             return
-        if wk["type"] == "ballot":
-            await reply(interaction, "Ballots score per category; those points are set when the ballot is created.")
-            return
         await storage.aio.set_week_points(week_id, exact_points, partial_points)
         text = f"**{week_id}** now scores {exact_points} pts exact / {partial_points} pts wrong spot."
         if await storage.aio.week_has_results(wk):
             text += " Results are already in, so run `/end-week` to re-score everyone."
         await reply(interaction, text)
-
-    @app_commands.command(
-        name="new-ballot", description="Start an awards ballot: categories, each with one correct answer and a point value"
-    )
-    @is_admin()
-    @app_commands.describe(name="Event name, e.g. Anime Trending Awards", note="Optional note for the announcement")
-    async def new_ballot(
-        self,
-        interaction: discord.Interaction,
-        name: app_commands.Range[str, 1, 80],
-        note: app_commands.Range[str, 0, 500] = "",
-    ):
-        ok, _ = await self._guard_new_event(interaction, needs_anime=False)
-        if ok:
-            await interaction.response.send_modal(BallotCategoriesModal(name, note))
 
     @app_commands.command(name="list-templates", description="Show saved scoring templates")
     @is_admin()
@@ -536,15 +399,7 @@ class Weeks(commands.Cog):
 
         given = given_ranks(rank_1, rank_2, rank_3, rank_4, rank_5, rank_6, rank_7, rank_8, rank_9, rank_10)
         if wk["type"] == "ballot":
-            if given:
-                await reply(interaction, "That event is an awards ballot, so the rank fields don't apply. Run `/end-week` with nothing filled in.")
-                return
-            categories = await storage.aio.get_ballot_categories(week_id)
-            if not categories:
-                await reply(interaction, f"{week_id} has no categories, so there is nothing to enter answers for.")
-                return
-            prefill = "\n".join(f"{c['category']}: {c['correct_answer']}" for c in categories if c["correct_answer"].strip())
-            await interaction.response.send_modal(BallotResultsModal(week_id, prefill))
+            await reply(interaction, f"{week_id} is an awards ballot, and ballots are switched off for now.")
             return
 
         if not storage.rules_complete(await storage.aio.get_rules(week_id)):

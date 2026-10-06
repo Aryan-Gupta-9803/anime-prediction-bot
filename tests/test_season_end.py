@@ -33,10 +33,9 @@ def test_end_season_posts_the_full_final_standings_and_closes_the_season(env):
         milestone = [m for m in backup_files(env) if "season end" in m.content]
         assert len(milestone) == 1 and milestone[0].attachments[0].filename.endswith("-keep.db")
 
-        for command, args in ((env.weeks.event_template, ("Standard", None, "")), (env.weeks.new_ballot, ("Awards", ""))):
-            j = env.inter(env.admin)
-            await command.callback(env.weeks, j, *args)
-            assert "season has ended" in j.all_text and j.modal is None
+        j = env.inter(env.admin)
+        await env.weeks.event_template.callback(env.weeks, j, "Standard", None, "")
+        assert "season has ended" in j.all_text and j.modal is None
 
         j = env.inter(env.alice)
         await env.help.help_cmd.callback(env.help, j)

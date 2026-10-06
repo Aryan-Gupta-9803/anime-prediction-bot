@@ -11,12 +11,12 @@ itself from the newest backup, and `/restore` lets a host roll back by hand.
 1. **`/setup`** (once): pick the announcements channel and the picks channel.
 2. **`/start`**: paste the season's anime titles (10 or more, one per line). They're posted in announcements.
 3. **Open a week**: `/event-template` (saved points such as Standard 2/1), `/new-event` (custom points;
-   `save_as` keeps them as a template), or `/new-ballot` (awards ballot).
+   `save_as` keeps them as a template).
 4. **Members `/pick`**: ten separate boxes over two steps (1-5, then 6-10), pre-filled with their current pick, or
    their last picks from an earlier week. Or a quick edit: `/pick rank-3: Bleach` changes only that rank (see below).
    Valid picks are posted in the picks channel and updated in place when changed. Picks are public by design.
 5. **`/lock`** when you're ready. Nothing closes automatically. `/unlock` undoes it.
-6. **`/end-week`**: enter the real top 10 in the same two-step form (or the ballot answers). Everyone is scored;
+6. **`/end-week`**: enter the real top 10 in the same two-step form (or fix single ranks with the `rank-` fields). Everyone is scored;
    results and season standings are posted, and a backup is saved. Run it again to correct a mistake.
 7. Repeat 3 to 6 each week.
 8. **`/end-season`** when the season is over: posts the full final leaderboard with the champion(s), locks everything
@@ -40,7 +40,6 @@ setup checklist (including backup status), the lifecycle, a command list and how
 | `/add-anime` `/remove-anime` | host | Adjust the title list mid-season |
 | `/event-template template [type] [note]` | host | Open a week with a saved scoring template |
 | `/new-event exact_points partial_points [type] [note] [save_as]` | host | Open a week with custom scoring |
-| `/new-ballot name [note]` | host | Open an awards ballot (form for categories and points) |
 | `/set-points exact_points partial_points [week]` | host | Change a ranked week's scoring (then `/end-week` to re-score) |
 | `/list-templates` | host | Show saved scoring templates |
 | `/lock` `/unlock` | host | Close or reopen picks (posts a notice in announcements) |
@@ -76,7 +75,7 @@ ranks you want to change and the rest keep their title, taken from the member's 
 if they haven't picked yet (for `/end-week`: the saved results). Placing a title that is already at another rank moves
 it and leaves the old rank empty; the private reply lists what changed and what moved. The same validation applies
 (every filled field must be a listed title, no repeats, at least one rank must remain), so a typo refuses the whole
-edit. With no fields, the commands open the form as before. Awards ballots don't use the rank fields.
+edit. With no fields, the commands open the form as before.
 
 ### Remembered picks
 
@@ -95,11 +94,9 @@ Summer 2026 sheet:
 | Standard | 2 | 1 |
 | First Week Advantage | 5 | 2 |
 
-Awards ballots are different: each category has one correct answer and a fixed point value, no ranking. Members
-answer as `Category: Guess` lines and can skip categories. Hosts enter answers the same way at `/end-week`; lines
-that don't match a category are skipped and reported, and the leaderboard is posted once nothing is skipped.
-
-Not built: the joker weeks and the unused "RESERVED" upper/lower-half idea from the original workbook.
+Not built: the joker weeks, the unused "RESERVED" upper/lower-half idea from the original workbook, and (switched off
+for now) the awards ballot. The ballot's storage and scoring code is still in the project so old backups restore and
+it can be brought back, but there is no command to start one.
 
 ## Backups
 
@@ -178,6 +175,6 @@ python bot.py
 pip install -r requirements-dev.txt
 pytest
 ```
-The suite runs offline against a temporary database and fake Discord objects: full ranked and ballot seasons,
+The suite runs offline against a temporary database and fake Discord objects: full ranked seasons,
 backups, pruning, restore (by command and automatic on a wiped host), reset, permissions, the Excel export, and
 Discord's size limits.

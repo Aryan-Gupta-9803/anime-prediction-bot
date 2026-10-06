@@ -22,7 +22,7 @@ def run(coro):
 
 def test_admin_commands_reject_regular_members_and_accept_hosts(env):
     admin_only = [env.season.setup_channels, env.season.start, env.season.reset, env.weeks.new_event,
-                  env.weeks.lock, env.weeks.end_week, env.weeks.new_ballot, env.help.help_admin,
+                  env.weeks.lock, env.weeks.end_week, env.help.help_admin,
                   env.weeks.set_points, env.backups.backup_now, env.backups.restore, env.backups.export,
                   env.weeks.end_season]
     from fakes import FakeUser
@@ -274,73 +274,6 @@ def test_forbidden_picks_channel_and_unlock(env):
     run(scenario())
 
 
-# ---- ballot flow ------------------------------------------------------------------------------------
-
-def test_full_ballot_lifecycle(env):
-    async def scenario():
-        await env.setup_channels()
-        i = env.inter(env.admin)
-        await env.weeks.new_ballot.callback(env.weeks, i, "Anime Trending Awards", "vote wisely")
-        bad = await env.submit(i, "Anime | 10\nMovie 8\nBoy | five\nGirl | 5\ngirl | 5")
-        assert "needs a '|'" in bad.all_text and "whole number" in bad.all_text and "more than once" in bad.all_text
-        assert storage.list_weeks() == []
-
-        i = env.inter(env.admin)
-        await env.weeks.new_ballot.callback(env.weeks, i, "Anime Trending Awards", "vote wisely")
-        ok = await env.submit(i, "Anime | 10\nMovie | 8\nBoy | 5\nGirl | 5")
-        assert "4 categories" in ok.all_text
-        ann = env.announce.sent[-1][1]
-        assert "**Anime** :: 10 pts" in ann.description and "Note :: vote wisely" in ann.description
-
-        # alice: partial ballot, case-insensitive; unknown category rejects everything
-        i = env.inter(env.alice); await env.user_cog.pick.callback(env.user_cog, i)
-        out = await env.submit(i, "Anme: Frieren\nMovie: Suzume")
-        assert "rejected" in out.all_text and "Did you mean 'Anime'?" in out.all_text
-        assert storage.get_ballot_picks("week-1") == []
-        i = env.inter(env.alice); await env.user_cog.pick.callback(env.user_cog, i)
-        out = await env.submit(i, "anime: frieren\nMovie: Suzume\nBoy: Izuku")
-        assert "Saved" in out.all_text
-        # bob duplicates a category -> rejected
-        i = env.inter(env.bob); await env.user_cog.pick.callback(env.user_cog, i)
-        out = await env.submit(i, "Anime: One Piece\nanime: Bleach")
-        assert "more than once" in out.all_text
-        i = env.inter(env.bob); await env.user_cog.pick.callback(env.user_cog, i)
-        await env.submit(i, "Anime: One Piece\nGirl: Frieren")
-        # alice changes her ballot: prefilled, embed edited in place, old rows replaced
-        i = env.inter(env.alice); await env.user_cog.pick.callback(env.user_cog, i)
-        assert set(i.modal.entries.default.splitlines()) == {"Anime: frieren", "Movie: Suzume", "Boy: Izuku"}
-        before = len(env.picks.sent)
-        await env.submit(i, "Anime: Frieren\nMovie: Suzume")
-        assert len(env.picks.sent) == before
-        assert {p["category"] for p in storage.get_ballot_picks("week-1", str(env.alice.id))} == {"Anime", "Movie"}
-        assert len(storage.get_ballot_picks("week-1", str(env.bob.id))) == 2, "other users' picks must survive"
-
-        i = env.inter(env.admin); await env.weeks.lock.callback(env.weeks, i)
-
-        # results with a typo'd category: valid lines applied, nothing posted publicly yet
-        i = env.inter(env.admin)
-        await env.weeks.end_week.callback(env.weeks, i, "")
-        posts_before = len(env.announce.sent)
-        out = await env.submit(i, "Anime: Frieren\nMoive: Suzume\nGirl: Frieren")
-        assert "Skipped" in out.all_text and "'Moive'" in out.all_text and "Still without an answer" in out.all_text
-        assert len(env.announce.sent) == posts_before
-        # fix just the bad line; earlier answers are kept; now it posts
-        i = env.inter(env.admin)
-        await env.weeks.end_week.callback(env.weeks, i, "")
-        assert "Anime: Frieren" in i.modal.entries.default
-        out = await env.submit(i, "Movie: Suzume\nBoy: Deku")
-        assert "Skipped" not in out.all_text
-        assert len(env.announce.sent) > posts_before
-        scores = {s["username"]: storage.score_points(s) for s in storage.list_scores("week-1")}
-        assert scores == {"alice": 18, "bob": 5}, scores     # alice: Anime 10 + Movie 8; Boy dropped on resubmit
-        i = env.inter(env.alice)
-        await env.user_cog.my_score.callback(env.user_cog, i, "")
-        assert "Anime" in i.last.embed.description and "correct" in i.last.embed.description
-        i = env.inter(env.carol); await env.user_cog.pick.callback(env.user_cog, i)
-        assert "locked" in i.all_text
-    run(scenario())
-
-
 # ---- reset ---------------------------------------------------------------------------------------------
 
 # ---- help --------------------------------------------------------------------------------------------------
@@ -369,7 +302,7 @@ def test_help_and_help_admin_reflect_state_and_fit_discord_limits(env):
         assert "[ok] Announcements" in text and "[ok] Picks" in text and "[ok] Anime list: 13 titles" in text
         assert "week-1 (standard) is open, 1 submission" in text
         assert len(i.last.embed) < 6000 and all(len(f.value) <= 1024 for f in i.last.embed.fields)
-        for cmd in ("/setup", "/start", "/end-week", "/unlock", "/help-admin", "/new-ballot", "/reset"):
+        for cmd in ("/setup", "/start", "/end-week", "/unlock", "/help-admin", "/reset"):
             assert cmd in text
 
         i = env.inter(env.alice); await env.help.help_cmd.callback(env.help, i)
@@ -383,14 +316,6 @@ def test_help_and_help_admin_reflect_state_and_fit_discord_limits(env):
         i = env.inter(env.alice); await env.help.help_cmd.callback(env.help, i)
         assert "waiting for the host" in i.all_text
 
-        # ballot status in /help
-        i = env.inter(env.admin); await env.weeks.end_week.callback(env.weeks, i, "")
-        await env.submit(i, "\n".join(RESULTS))
-        i = env.inter(env.admin)
-        await env.weeks.new_ballot.callback(env.weeks, i, "Awards", "")
-        await env.submit(i, "Anime | 10\nMovie | 8")
-        i = env.inter(env.alice); await env.help.help_cmd.callback(env.help, i)
-        assert "awards ballot" in i.all_text and "18" in i.all_text
     run(scenario())
 
 
@@ -432,7 +357,7 @@ def test_every_command_is_valid_for_discord(env):
             await bot.load_extension(ext)
         names = sorted(c.name for c in bot.tree.get_commands())
         assert names == sorted([
-            "setup", "start", "add-anime", "remove-anime", "reset", "event-template", "new-event", "new-ballot",
+            "setup", "start", "add-anime", "remove-anime", "reset", "event-template", "new-event",
             "list-templates", "lock", "unlock", "end-week", "pick", "my-score", "leaderboard", "anime-list",
             "help", "help-admin", "set-points", "backup", "restore", "export", "end-season"]), names
         for c in bot.tree.get_commands():
@@ -482,8 +407,7 @@ def test_commands_and_modals_respect_discord_limits(env):
         title100 = "T" * 100
         picks = RankedForm(noun="Rank", prefill=[title100] * 10, source_note="copied from week-12", reject_prefix="", finish=None)
         chart = RankedForm(noun="Rank", prefill=[title100] * 10, source_note="saved results", reject_prefix="", finish=None)
-        modals = [season.StartModal(), weeks.BallotResultsModal("w", big), weeks.BallotCategoriesModal("n", ""),
-                  user.BallotPickModal("w", big), SlotModal(picks, 1), SlotModal(picks, 2),
+        modals = [season.StartModal(), SlotModal(picks, 1), SlotModal(picks, 2),
                   SlotModal(chart, 1), SlotModal(chart, 2)]
         for m in modals:
             assert len(m.title) <= 45, m.title

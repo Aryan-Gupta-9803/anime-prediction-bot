@@ -38,12 +38,7 @@ async def _event_status(week) -> str:
     count = await storage.aio.count_submissions(week)
     has_results = await storage.aio.week_has_results(week)
 
-    if kind == "ballot":
-        categories = await storage.aio.get_ballot_categories(week_id)
-        total = sum(int(c["points"]) for c in categories if str(c["points"]).lstrip("-").isdigit())
-        scoring = f"awards ballot with **{len(categories)}** categories worth up to **{total}** pts in total"
-    else:
-        scoring = _scoring_summary(await storage.aio.get_rules(week_id))
+    scoring = _scoring_summary(await storage.aio.get_rules(week_id))
 
     if not locked:
         state = "**open**: use `/pick` to submit or change yours"
@@ -101,21 +96,27 @@ class Help(commands.Cog):
         )
         embed.add_field(name="Right now", value=clip(status, 1024), inline=False)
         embed.add_field(
-            name="How to play",
+            name="Picking your top 10",
             value=(
-                "1. `/anime-list` shows the titles you can pick from.\n"
-                "2. `/pick` on its own opens a form. Ranked weeks: ten boxes over two steps (1-5, then 6-10), 1st "
-                "place first. You can leave boxes empty, but anything you type must be a title from the list, "
-                "spelled as there, with no repeats. Awards ballots: one `Category: Your guess` per line; skipping "
-                "categories is fine.\n"
-                "   **Quick edit:** fill in just the `rank-` fields you want to change, e.g. `/pick rank-3: Bleach` "
-                "(start typing and titles are suggested). Every other rank stays as it was, and `(leave empty)` "
-                "empties a rank.\n"
-                "3. A mistake rejects the whole submission and nothing is saved (an earlier pick of yours stays). "
+                "Run `/pick` and use the `rank-` fields. Each one is a spot on the chart: `rank-1` is the title "
+                "you think will be **#1 (top of the chart)**, `rank-2` is #2, and so on down to `rank-10`.\n"
+                "Click a field and start typing, and matching titles are suggested. Fill in as many as you like; a "
+                "rank you skip keeps your current pick (or stays empty if you have none).\n"
+                "To change just one later: `/pick rank-3: Bleach`. Choose `(leave empty)` to empty a rank.\n"
+                "Prefer boxes? `/pick` with no fields opens a short form instead: ten boxes over two steps "
+                "(1-5, then 6-10), filled in with your last picks."
+            ),
+            inline=False,
+        )
+        embed.add_field(
+            name="The rules",
+            value=(
+                "1. `/anime-list` shows the titles you can pick from. Use a title as it's spelled there, and don't "
+                "repeat one.\n"
+                "2. A mistake rejects the whole submission and nothing is saved (an earlier pick of yours stays). "
                 "I'll point at what's wrong.\n"
-                "4. Your picks are posted in the picks channel and are public. Next time the form is pre-filled "
-                "with your last picks, so you only change what you want; your post updates in place.\n"
-                "5. Picks close when a host runs `/lock` (there's no automatic deadline), then results get scored."
+                "3. Your picks are posted in the picks channel and are public; your post updates in place.\n"
+                "4. Picks close when a host runs `/lock` (there's no automatic deadline), then results get scored."
             ),
             inline=False,
         )
@@ -163,7 +164,7 @@ class Help(commands.Cog):
         if await storage.aio.season_ended():
             checklist.append("[ok] Season ended. Run `/reset` to archive it and start the next one.")
         elif week is None:
-            checklist.append("[ok] No event open. Start one with `/event-template`, `/new-event` or `/new-ballot`.")
+            checklist.append("[ok] No event open. Start one with `/event-template` or `/new-event`.")
         else:
             count = await storage.aio.count_submissions(week)
             if not storage.week_is_locked(week):
@@ -191,11 +192,11 @@ class Help(commands.Cog):
             name="Every week",
             value=(
                 "1. Open it: `/event-template` (saved points, e.g. Standard 2/1) or `/new-event` (custom points; "
-                "`save_as` keeps them as a template). Awards ballot: `/new-ballot`.\n"
+                "`save_as` keeps them as a template).\n"
                 "2. Members use `/pick`; their picks appear in the picks channel.\n"
                 "3. `/lock` when you're ready. Nothing closes automatically.\n"
                 "4. `/end-week` enter the real top 10 in the same two-step form, or fix single ranks with the `rank-` fields "
-                "(or the ballot answers). Titles "
+                "Titles "
                 "must be on the list: add a missing one with `/add-anime` first. It scores everyone and posts the "
                 "results and standings."
             ),
@@ -205,7 +206,7 @@ class Help(commands.Cog):
             name="Host commands",
             value=(
                 "`/setup` `/start` `/add-anime` `/remove-anime` `/reset`\n"
-                "`/event-template` `/new-event` `/new-ballot` `/set-points` `/list-templates`\n"
+                "`/event-template` `/new-event` `/set-points` `/list-templates`\n"
                 "`/lock` `/unlock` `/end-week [week]` `/end-season`\n"
                 "`/backup` `/restore [file]` `/export`\n"
                 "`/help-admin` this guide"
@@ -229,7 +230,7 @@ class Help(commands.Cog):
         embed.add_field(
             name="Good to know",
             value=(
-                "Picks are public as soon as they're submitted. Awards ballots can be partly filled in. "
+                "Picks are public as soon as they're submitted. "
                 "Anything big asks you to confirm first. If the host ever loses its disk, a fresh start restores "
                 "from the newest backup by itself. This bot only works in this server."
             ),

@@ -7,7 +7,6 @@ from discord.utils import escape_markdown as esc
 
 import storage
 from common import (
-    SafeModal,
     acknowledge,
     get_text_channel,
     given_ranks,
@@ -22,7 +21,7 @@ import style
 from style import pts, row
 from textutil import clip
 from forms import RankedForm
-from validation import merge_rank_edits, parse_category_pairs, validate_ballot_pick
+from validation import merge_rank_edits
 
 REJECTED = "Submission rejected, nothing was saved (any earlier pick of yours is unchanged):"
 
@@ -123,68 +122,14 @@ async def _prefill_ranks(week_id: str, user_id: str, valid_titles: list):
     return cleaned, (note if any(cleaned) else "")
 
 
-class BallotPickModal(SafeModal, title="Submit your awards ballot"):
-    entries = discord.ui.TextInput(
-        label="One guess per line: Category: Your guess",
-        style=discord.TextStyle.paragraph,
-        placeholder="Anime: Frieren\nMovie: Suzume\n...",
-        required=True,
-        max_length=4000,
-    )
-
-    def __init__(self, week_id: str, prefill: str = ""):
-        super().__init__()
-        self.week_id = week_id
-        self.entries.default = prefill[: self.entries.max_length] or None
-
-    async def on_submit(self, interaction: discord.Interaction):
-        pairs, parse_errors = parse_category_pairs(self.entries.value)
-        categories = await storage.aio.get_ballot_categories(self.week_id)
-        ok, errors, canonical = validate_ballot_pick(pairs, [c["category"] for c in categories])
-        errors = parse_errors + errors
-        if errors or not ok:
-            await reply(interaction, clip(REJECTED + "\n" + "\n".join(f"- {e}" for e in errors), 1900))
-            return
-        if not canonical:
-            await reply(interaction, "I found no guesses, so nothing was saved. Use `Category: Guess`, one per line.")
-            return
-        if await _open_week_or_explain(interaction, self.week_id) is None:
-            return
-        channel = await _picks_channel_or_explain(interaction)
-        if channel is None:
-            return
-
-        await interaction.response.defer(ephemeral=True)
-        user_id = str(interaction.user.id)
-        existing = await storage.aio.get_ballot_submission(self.week_id, user_id)
-        lines = [row(f"**{esc(cat)}**", esc(guess)) for cat, guess in canonical.items()]
-        embed = style.embed(
-            f"{esc(interaction.user.display_name)}'s ballot",
-            (self.week_id, [clip("\n".join(lines), 3500)]),
-            footer="Change it any time before the lock with /pick",
-        )
-
-        async def save(message_id):
-            await storage.aio.set_ballot_picks(self.week_id, user_id, str(interaction.user), canonical)
-            await storage.aio.upsert_ballot_submission(self.week_id, user_id, str(interaction.user), message_id)
-
-        message_id = await _publish(interaction, channel, existing["message_id"] if existing else None, embed, save)
-        if message_id is not None:
-            await reply(interaction, f"Saved. [See your ballot]({_jump_url(channel, message_id)}). You can change it until the host locks the event.")
-
-
-def _breakdown_lines(week_type: str, raw: str) -> list:
+def _breakdown_lines(raw: str) -> list:
     try:
         rows = json.loads(raw)
     except (TypeError, ValueError):
         return []
     lines = []
     for r in rows:
-        if week_type == "ballot":
-            detail = f", answer: {esc(r['correct'])}" if r["reason"] == "incorrect" else ""
-            lines.append(row(f"**{esc(r['category'])}**", f"{esc(r['guess']) or '-'} — {pts(r['points'])} ({r['reason']}{detail})"))
-        else:
-            lines.append(row(r["position"], f"{esc(r['predicted']) or '-'} — {pts(r['points'])} ({r['reason']})"))
+        lines.append(row(r["position"], f"{esc(r['predicted']) or '-'} — {pts(r['points'])} ({r['reason']})"))
     return lines
 
 
@@ -220,12 +165,7 @@ class UserCommands(commands.Cog):
         user_id = str(interaction.user.id)
         given = given_ranks(rank_1, rank_2, rank_3, rank_4, rank_5, rank_6, rank_7, rank_8, rank_9, rank_10)
         if week["type"] == "ballot":
-            if given:
-                await reply(interaction, "This event is an awards ballot, so the rank fields don't apply. Run `/pick` with nothing filled in.")
-                return
-            picks = await storage.aio.get_ballot_picks(week["week_id"], user_id)
-            prefill = "\n".join(f"{p['category']}: {p['guess']}" for p in picks)
-            await interaction.response.send_modal(BallotPickModal(week["week_id"], prefill))
+            await reply(interaction, f"{week['week_id']} is an awards ballot, and ballots are switched off for now.")
             return
 
         week_id = week["week_id"]
@@ -275,11 +215,7 @@ class UserCommands(commands.Cog):
         scores = await storage.aio.list_scores()
         mine = next((s for s in scores if s["week_id"] == week_id and str(s["user_id"]) == user_id), None)
         if mine is None:
-            submitted = (
-                await storage.aio.get_ballot_submission(week_id, user_id)
-                if wk["type"] == "ballot"
-                else await storage.aio.get_prediction(week_id, user_id)
-            )
+            submitted = await storage.aio.get_prediction(week_id, user_id)
             await reply(
                 interaction,
                 f"Your picks for {week_id} are in, but it hasn't been scored yet."
@@ -293,7 +229,7 @@ class UserCommands(commands.Cog):
         if user_id in totals:
             rank = next(r for r, uid, _ in ranking(totals) if uid == user_id)
             footer = f"Season total: {totals[user_id]} pts (rank {rank} of {len(totals)})"
-        lines = _breakdown_lines(wk["type"], mine["breakdown_json"])
+        lines = _breakdown_lines(mine["breakdown_json"])
         embed = style.embed(
             f"Your score: {week_id}",
             (pts(storage.score_points(mine)), [clip("\n".join(lines), 3500)] if lines else None),

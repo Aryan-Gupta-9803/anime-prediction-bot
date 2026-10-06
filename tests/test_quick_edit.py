@@ -167,7 +167,7 @@ def test_quick_edit_respects_locks_and_missing_events(env):
     run(scenario())
 
 
-def test_no_fields_still_opens_the_form_and_ballots_refuse_rank_fields(env):
+def test_no_fields_still_opens_the_form_and_leftover_ballots_are_switched_off(env):
     async def scenario():
         await start_week(env)
         i = env.inter(env.alice)
@@ -175,14 +175,14 @@ def test_no_fields_still_opens_the_form_and_ballots_refuse_rank_fields(env):
         assert i.modal is not None and not i.sent
 
         await env.weeks.lock.callback(env.weeks, env.inter(env.admin))
-        k = env.inter(env.admin)
-        await env.weeks.new_ballot.callback(env.weeks, k, "Awards", "")
-        await env.submit(k, "Anime | 10\nMovie | 5")
-        out = await quick_pick(env, env.alice, rank_1="Bleach")
-        assert "awards ballot" in out.all_text and out.modal is None
-        i = env.inter(env.alice)
-        await env.user_cog.pick.callback(env.user_cog, i)
-        assert i.modal is not None, "a ballot with no fields still opens its form"
+        storage.create_ballot_event("week-2", "", [("Anime", 10)])      # left over from before ballots were removed
+        for fields in ((), ("Bleach",)):
+            out = env.inter(env.alice)
+            await env.user_cog.pick.callback(env.user_cog, out, *fields)
+            assert "switched off" in out.all_text and out.modal is None
+        out = env.inter(env.admin)
+        await env.weeks.end_week.callback(env.weeks, out, "")
+        assert "switched off" in out.all_text and out.modal is None
     run(scenario())
 
 

@@ -391,10 +391,4 @@ def test_set_points_changes_scoring_and_asks_for_a_rescore(env):
         await env.submit(k, "\n".join(RESULTS))
         assert storage.score_points(storage.list_scores("week-1")[0]) == 30
 
-        i = env.inter(env.admin)
-        await env.weeks.new_ballot.callback(env.weeks, i, "Awards", "")
-        await env.submit(i, "Anime | 10")
-        i = env.inter(env.admin)
-        await env.weeks.set_points.callback(env.weeks, i, 1, 1, "")
-        assert "Ballots score per category" in i.all_text
     run(scenario())
