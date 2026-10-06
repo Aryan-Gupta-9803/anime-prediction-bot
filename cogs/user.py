@@ -86,7 +86,8 @@ async def _finish_picks(interaction: discord.Interaction, week_id: str, canonica
     embed = style.embed(
         f"{esc(interaction.user.display_name)}'s picks",
         (week_id, [row(i, esc(t) if t else "-") for i, t in enumerate(canonical, start=1)]),
-        footer="Change them any time before the lock with /pick",
+        footer="Change them any time before the lock with /pick · Last edited",
+        timestamp=True,
     )
 
     async def save(message_id):

@@ -225,6 +225,33 @@ def test_bare_pick_says_where_carried_over_picks_came_from_and_drops_removed_tit
     run(scenario())
 
 
+def test_each_prediction_embed_is_stamped_with_its_latest_edit(env):
+    import datetime
+
+    async def scenario():
+        await start_week(env)
+        await full_pick(env, env.alice)
+        await full_pick(env, env.bob)
+        alice_post, bob_post = env.picks.sent[0][2], env.picks.sent[1][2]
+        first = alice_post.embed.timestamp
+        assert isinstance(first, datetime.datetime) and first.tzinfo is not None, "a timezone-aware time"
+        assert abs((datetime.datetime.now(datetime.timezone.utc) - first).total_seconds()) < 60
+        assert alice_post.embed.footer.text.endswith("Last edited")
+        bob_first = bob_post.embed.timestamp
+
+        await asyncio.sleep(0.01)
+        await quick_pick(env, env.alice, rank_3="Mob Psycho 100")
+        assert len(env.picks.sent) == 2, "still edited in place"
+        assert alice_post.embed.timestamp > first, "an edit moves the time forward"
+        assert bob_post.embed.timestamp == bob_first, "other members' posts are untouched"
+
+        await asyncio.sleep(0.01)                          # a refused edit changes neither the post nor its time
+        stamp = alice_post.embed.timestamp
+        await quick_pick(env, env.alice, rank_4="Blech")
+        assert alice_post.embed.timestamp == stamp
+    run(scenario())
+
+
 # ---- /end-week -----------------------------------------------------------------------------------------------
 
 def test_end_week_can_correct_one_rank_and_rescores(env):

@@ -25,8 +25,9 @@ def pts(n) -> str:
     return f"{n} pt" if n in (1, -1) else f"{n} pts"
 
 
-def embed(title: str, *sections, footer: "str | None" = None) -> discord.Embed:
-    """sections are (subheading, lines) pairs; either half may be None.
+def embed(title: str, *sections, footer: "str | None" = None, timestamp: bool = False) -> discord.Embed:
+    """sections are (subheading, lines) pairs; either half may be None. timestamp=True stamps the embed with
+    the current time (Discord shows it, in each reader's own timezone, next to the footer).
 
     # Title
     ### Subheading
@@ -41,6 +42,8 @@ def embed(title: str, *sections, footer: "str | None" = None) -> discord.Embed:
     result = discord.Embed(description="\n".join(parts), colour=ACCENT)
     if footer:
         result.set_footer(text=footer)
+    if timestamp:
+        result.timestamp = discord.utils.utcnow()
     return result
 
 
