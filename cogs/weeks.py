@@ -1,0 +1,594 @@
+import asyncio
+from collections import defaultdict
+
+import discord
+from discord import app_commands
+from discord.ext import commands
+from discord.utils import escape_markdown as esc
+
+import backup
+import storage
+from common import (
+    ConfirmView,
+    SafeModal,
+    get_text_channel,
+    ranking,
+    reply,
+    season_totals,
+    send_paged,
+    week_autocomplete,
+)
+import style
+from forms import RankedForm
+from permissions import is_admin
+from scoring import compute_ballot_score, compute_score
+from style import pts, row
+from textutil import chunk_lines
+from validation import parse_category_definitions, parse_category_pairs
+
+WEEK_TYPE_CHOICES = [
+    app_commands.Choice(name="standard", value="standard"),
+    app_commands.Choice(name="special", value="special"),
+]
+
+
+# ---- scoring (blocking; always run via asyncio.to_thread) -------------------------------------------
+
+def _score_week(week_id: str, actual: list) -> int:
+    rules = storage.get_rules(week_id)
+    entries = []
+    for p in storage.list_predictions(week_id):
+        total, breakdown = compute_score(storage.prediction_ranks(p), actual, rules)
+        entries.append({"user_id": p["user_id"], "username": p["username"], "points": total, "breakdown": breakdown})
+    storage.replace_scores(week_id, entries)
+    return len(entries)
+
+
+def _score_ballot(week_id: str) -> int:
+    categories = storage.get_ballot_categories(week_id)
+    picks_by_user, names = defaultdict(list), {}
+    for p in storage.get_ballot_picks(week_id):
+        picks_by_user[p["user_id"]].append(p)
+        names[p["user_id"]] = p["username"]
+    entries = []
+    for user_id, user_picks in picks_by_user.items():
+        total, breakdown = compute_ballot_score(user_picks, categories)
+        entries.append({"user_id": user_id, "username": names[user_id], "points": total, "breakdown": breakdown})
+    storage.replace_scores(week_id, entries)
+    return len(entries)
+
+
+# ---- announcements -------------------------------------------------------------------------------------
+
+def _leaderboard_lines(totals: dict, names: dict, limit: int = 15) -> list:
+    rows = ranking(totals)
+    lines = [row(rank, f"**{esc(names[uid])}** — {pts(points)}") for rank, uid, points in rows[:limit]]
+    if len(rows) > limit:
+        lines.append(f"...and {len(rows) - limit} more. Use /leaderboard to see where you stand.")
+    return lines
+
+
+async def _post_results(client: discord.Client, week_id: str) -> bool:
+    """Posts the week's results and standings to the announcement channel."""
+    channel = await get_text_channel(client, "announcement_channel_id")
+    if channel is None:
+        return False
+
+    week = await storage.aio.get_week(week_id)
+    scores = await storage.aio.list_scores(week_id)
+    totals, names = season_totals(scores)
+    board = _leaderboard_lines(totals, names) or ["Nobody submitted a prediction for this one."]
+    title = f"Results are in: {week_id}" + (f" ({week['type']})" if week else "")
+    greeting = f"Hello everyone! The **{week_id}** results are in!"
+
+    if week and week["type"] == "ballot":
+        categories = await storage.aio.get_ballot_categories(week_id)
+        answers = [
+            row(f"**{esc(c['category'])}** ({pts(c['points'])})", esc(c["correct_answer"]) or "not judged")
+            for c in categories
+        ]
+        await channel.send(content=greeting, embed=style.embed(title, ("Leaderboard", board)))
+        await send_paged(channel, f"Correct answers: {week_id}", answers)
+    else:
+        actual = await storage.aio.get_results(week_id) or []
+        top10 = [row(i, esc(t) if t else "-") for i, t in enumerate(actual, start=1)]
+        await channel.send(content=greeting, embed=style.embed(title, ("Actual top 10", top10), ("Leaderboard", board)))
+
+    all_scores = await storage.aio.list_scores()
+    if len({s["week_id"] for s in all_scores}) > 1:
+        season, season_names = season_totals(all_scores)
+        await channel.send(embed=style.embed("Season standings", (None, _leaderboard_lines(season, season_names))))
+    return True
+
+
+# ---- result entry --------------------------------------------------------------------------------------
+
+async def _finish_results(interaction: discord.Interaction, week_id: str, actual: list):
+    """Saves the validated real chart (empty spots allowed), scores everyone and posts the results."""
+    if not storage.rules_complete(await storage.aio.get_rules(week_id)):
+        await reply(
+            interaction,
+            f"The scoring rules for {week_id} are incomplete, so scoring would give everyone 0. "
+            "Set them with `/set-points` first.",
+        )
+        return
+
+    await interaction.response.edit_message(content="Scoring...", view=None)
+    await storage.aio.save_result(week_id, actual)
+    await storage.aio.set_week_locked(week_id, True)
+    scored = await asyncio.to_thread(_score_week, week_id, actual)
+    posted = await _post_results(interaction.client, week_id)
+    backup_problem = await backup.try_backup(interaction.client, f"{week_id} scored")
+
+    lines = [f"Results saved and **{scored}** prediction(s) scored for {week_id}."]
+    empty = actual.count("")
+    if empty:
+        lines.append(f"{empty} chart spot(s) were left empty, so nobody can score on them. Run `/end-week` again to fill them in.")
+    if not posted:
+        lines.append("I couldn't post to the announcement channel. Check `/setup` and my permissions.")
+    if backup_problem:
+        lines.append(f"The backup after scoring didn't go through: {backup_problem}")
+    await reply(interaction, "\n".join(lines))
+
+
+class BallotResultsModal(SafeModal, title="Enter the correct answers"):
+    entries = discord.ui.TextInput(
+        label="One per line: Category: Correct answer",
+        style=discord.TextStyle.paragraph,
+        required=True,
+        max_length=4000,
+    )
+
+    def __init__(self, week_id: str, prefill: str = ""):
+        super().__init__()
+        self.week_id = week_id
+        self.entries.default = prefill[: self.entries.max_length] or None
+
+    async def on_submit(self, interaction: discord.Interaction):
+        pairs, parse_errors = parse_category_pairs(self.entries.value)
+        await interaction.response.defer(ephemeral=True)
+
+        applied, unknown = await storage.aio.set_ballot_correct_answers(self.week_id, pairs)
+        await storage.aio.set_week_locked(self.week_id, True)
+        scored = await asyncio.to_thread(_score_ballot, self.week_id)
+
+        categories = await storage.aio.get_ballot_categories(self.week_id)
+        unjudged = [c["category"] for c in categories if not c["correct_answer"].strip()]
+        skipped = parse_errors + [f"'{c}' isn't a category on this event" for c in unknown]
+
+        lines = [f"Recorded {applied} answer(s) and scored **{scored}** participant(s) for {self.week_id}."]
+        if skipped:
+            lines.append(
+                "Skipped these lines. Run `/end-week` again with just the corrected lines; answers you already "
+                "entered are kept, and I'll post the leaderboard once nothing is skipped:\n"
+                + "\n".join(f"- {s}" for s in skipped)
+            )
+        else:
+            posted = await _post_results(interaction.client, self.week_id)
+            if not posted:
+                lines.append("I couldn't post to the announcement channel. Check `/setup` and my permissions.")
+        if unjudged:
+            lines.append(f"Still without an answer ({len(unjudged)}): " + ", ".join(unjudged))
+        await reply(interaction, "\n".join(lines))
+
+
+class BallotCategoriesModal(SafeModal, title="Define awards ballot categories"):
+    entries = discord.ui.TextInput(
+        label="One per line: Category | Points",
+        style=discord.TextStyle.paragraph,
+        placeholder="Anime | 10\nMovie | 8\nBoy | 5\n...",
+        required=True,
+        max_length=4000,
+    )
+
+    def __init__(self, event_name: str, note: str):
+        super().__init__()
+        self.event_name = event_name
+        self.note = note
+
+    async def on_submit(self, interaction: discord.Interaction):
+        categories, errors = parse_category_definitions(self.entries.value)
+        if errors or not categories:
+            await reply(
+                interaction,
+                "Couldn't create the ballot, nothing was saved:\n"
+                + "\n".join(f"- {e}" for e in (errors or ["No categories found."])),
+            )
+            return
+
+        await interaction.response.defer(ephemeral=True)
+        # Re-check: another host may have opened a week while this form was open.
+        current = await storage.aio.get_current_week()
+        if current and not storage.week_is_locked(current):
+            await reply(interaction, f"**{current['week_id']}** was opened in the meantime. Lock or end it first.")
+            return
+
+        week_id = await storage.aio.next_week_id()
+        await storage.aio.create_ballot_event(week_id, self.note, categories)
+
+        channel = await get_text_channel(interaction.client, "announcement_channel_id")
+        posted = channel is not None
+        if channel is not None:
+            lines = [row("Note", esc(self.note))] if self.note else []
+            lines += [row(f"**{esc(name)}**", pts(points)) for name, points in categories]
+            await send_paged(
+                channel,
+                f"{week_id}: {esc(self.event_name)}",
+                lines,
+                subheading="Use /pick to guess as `Category: Your guess`, one per line. Blank categories are fine.",
+                content="Hello everyone! A new **awards ballot** is open!",
+            )
+
+        text = f"Started ballot **{week_id}: {self.event_name}** with {len(categories)} categories."
+        if not posted:
+            text += " I couldn't post the announcement. Check `/setup` and my permissions."
+        await reply(interaction, text)
+
+
+# ---- commands ---------------------------------------------------------------------------------------------
+
+async def _post_final_standings(client: discord.Client) -> bool:
+    channel = await get_text_channel(client, "announcement_channel_id")
+    if channel is None:
+        return False
+    scores = await storage.aio.list_scores()
+    totals, names = season_totals(scores)
+    rows = ranking(totals)
+    top = rows[0][2]
+    champions = [esc(names[uid]) for _, uid, pts in rows if pts == top]
+    if len(champions) == 1:
+        lead = f"Champion: {champions[0]} with {top} pts"
+    else:
+        lead = f"Champions: {', '.join(champions)} with {top} pts each"
+    lines = [row(rank, f"**{esc(names[uid])}** — {pts(points)}") for rank, uid, points in rows]
+    events = len({s["week_id"] for s in scores})
+    await send_paged(
+        channel,
+        "Season complete: final standings",
+        lines,
+        subheading=lead,
+        footer=f"{events} event(s) scored, {len(rows)} player(s)",
+        content="Hello everyone! That's a wrap on the season. Here are the **final standings**!",
+    )
+    return True
+
+
+async def template_autocomplete(interaction: discord.Interaction, current: str):
+    templates = [t for t in await storage.aio.list_templates() if current.lower() in t["name"].lower()]
+    return [
+        app_commands.Choice(name=f"{t['name']} ({t['exact_points']}/{t['partial_points']})"[:100], value=t["name"])
+        for t in templates
+    ][:25]
+
+
+class Weeks(commands.Cog):
+    def __init__(self, bot: commands.Bot):
+        self.bot = bot
+
+    async def _guard_new_event(self, interaction: discord.Interaction, needs_anime: bool) -> "tuple[bool, str]":
+        """Checks everything that must be true before a new event opens.
+        Returns (ok, reminder); when not ok the user has already been told why."""
+        if not (await storage.aio.get_config("announcement_channel_id") and await storage.aio.get_config("user_channel_id")):
+            await reply(interaction, "Run `/setup` first so I know which channels to use.")
+            return False, ""
+        if needs_anime and not await storage.aio.get_anime_list():
+            await reply(interaction, "No anime list yet. Run `/start` first.")
+            return False, ""
+        if await storage.aio.season_ended():
+            await reply(
+                interaction,
+                "The season has ended. Run `/reset` to archive it and start a new one, or `/restore` to undo.",
+            )
+            return False, ""
+        current = await storage.aio.get_current_week()
+        if current and not storage.week_is_locked(current):
+            await reply(
+                interaction,
+                f"**{current['week_id']}** is still open. Run `/lock` or `/end-week` before starting another.",
+            )
+            return False, ""
+        reminder = ""
+        if current and not await storage.aio.week_has_results(current):
+            reminder = (
+                f"\nReminder: **{current['week_id']}** is locked but has no results yet. "
+                f"Score it any time with `/end-week week:{current['week_id']}`."
+            )
+        return True, reminder
+
+    async def _start_week(
+        self,
+        interaction: discord.Interaction,
+        week_type: str,
+        note: str,
+        exact_points: int,
+        partial_points: int,
+        save_as: str = "",
+    ):
+        ok, reminder = await self._guard_new_event(interaction, needs_anime=True)
+        if not ok:
+            return
+        await interaction.response.defer(ephemeral=True)
+
+        replaced = None
+        if save_as:
+            replaced = await storage.aio.save_template(
+                save_as.strip(), exact_points, partial_points, f"Saved from /new-event ({week_type})"
+            )
+        week_id = await storage.aio.next_week_id()
+        await storage.aio.create_week(week_id, week_type, note, exact_points, partial_points)
+
+        channel = await get_text_channel(interaction.client, "announcement_channel_id")
+        if channel is not None:
+            lines = [
+                row("Type", week_type),
+                row("Scoring", f"{pts(exact_points)} for an exact spot, {pts(partial_points)} if it's on the chart elsewhere"),
+            ]
+            if note:
+                lines.append(row("Note", esc(note)))
+            await channel.send(
+                content=f"Hello everyone! **{week_id}** predictions are open!",
+                embed=style.embed(
+                    f"{week_id} predictions are open",
+                    ("Use /pick to submit your ranked top 10, with titles from /anime-list.", lines),
+                ),
+            )
+
+        text = f"Started **{week_id}** ({week_type}): {exact_points} pts exact / {partial_points} pts wrong spot."
+        if save_as:
+            text += f" Template **{save_as.strip()}** {'updated' if replaced else 'saved'}."
+        if channel is None:
+            text += "\nI couldn't post the announcement. Check `/setup` and my permissions."
+        await reply(interaction, text + reminder)
+
+    @app_commands.command(name="event-template", description="Start a new week using a saved scoring template")
+    @is_admin()
+    @app_commands.describe(
+        template="Saved scoring template to use",
+        week_type="standard or special",
+        note="Shown in the announcement, e.g. a suggested deadline (the bot never closes picks by itself)",
+    )
+    @app_commands.choices(week_type=WEEK_TYPE_CHOICES)
+    @app_commands.autocomplete(template=template_autocomplete)
+    async def event_template(
+        self,
+        interaction: discord.Interaction,
+        template: str,
+        week_type: app_commands.Choice[str] = None,
+        note: app_commands.Range[str, 0, 500] = "",
+    ):
+        tmpl = await storage.aio.get_template(template)
+        if tmpl is None:
+            await reply(interaction, f"No template named **{template}**. See `/list-templates`.")
+            return
+        await self._start_week(
+            interaction,
+            week_type.value if week_type else "standard",
+            note,
+            tmpl["exact_points"],
+            tmpl["partial_points"],
+        )
+
+    @app_commands.command(name="new-event", description="Start a new week with custom scoring, optionally saved as a template")
+    @is_admin()
+    @app_commands.describe(
+        exact_points="Points for an exact position match",
+        partial_points="Points if the anime charts but in a different position",
+        week_type="standard or special",
+        note="Shown in the announcement, e.g. a suggested deadline (the bot never closes picks by itself)",
+        save_as="Also save these values as a reusable template with this name",
+    )
+    @app_commands.choices(week_type=WEEK_TYPE_CHOICES)
+    async def new_event(
+        self,
+        interaction: discord.Interaction,
+        exact_points: app_commands.Range[int, -100, 1000],
+        partial_points: app_commands.Range[int, -100, 1000],
+        week_type: app_commands.Choice[str] = None,
+        note: app_commands.Range[str, 0, 500] = "",
+        save_as: app_commands.Range[str, 0, 60] = "",
+    ):
+        await self._start_week(
+            interaction,
+            week_type.value if week_type else "standard",
+            note,
+            exact_points,
+            partial_points,
+            save_as,
+        )
+
+    @app_commands.command(name="set-points", description="Change a ranked week's scoring (then re-run /end-week to re-score)")
+    @is_admin()
+    @app_commands.describe(
+        exact_points="Points for an exact position match",
+        partial_points="Points if the anime charts but in a different position",
+        week="Leave empty for the active event",
+    )
+    @app_commands.autocomplete(week=week_autocomplete)
+    async def set_points(
+        self,
+        interaction: discord.Interaction,
+        exact_points: app_commands.Range[int, -100, 1000],
+        partial_points: app_commands.Range[int, -100, 1000],
+        week: str = "",
+    ):
+        week_id = week or await storage.aio.get_current_week_id()
+        wk = await storage.aio.get_week(week_id) if week_id else None
+        if wk is None:
+            await reply(interaction, "No such event. Pass a week id, or open one first.")
+            return
+        if wk["type"] == "ballot":
+            await reply(interaction, "Ballots score per category; those points are set when the ballot is created.")
+            return
+        await storage.aio.set_week_points(week_id, exact_points, partial_points)
+        text = f"**{week_id}** now scores {exact_points} pts exact / {partial_points} pts wrong spot."
+        if await storage.aio.week_has_results(wk):
+            text += " Results are already in, so run `/end-week` to re-score everyone."
+        await reply(interaction, text)
+
+    @app_commands.command(
+        name="new-ballot", description="Start an awards ballot: categories, each with one correct answer and a point value"
+    )
+    @is_admin()
+    @app_commands.describe(name="Event name, e.g. Anime Trending Awards", note="Optional note for the announcement")
+    async def new_ballot(
+        self,
+        interaction: discord.Interaction,
+        name: app_commands.Range[str, 1, 80],
+        note: app_commands.Range[str, 0, 500] = "",
+    ):
+        ok, _ = await self._guard_new_event(interaction, needs_anime=False)
+        if ok:
+            await interaction.response.send_modal(BallotCategoriesModal(name, note))
+
+    @app_commands.command(name="list-templates", description="Show saved scoring templates")
+    @is_admin()
+    async def list_templates_cmd(self, interaction: discord.Interaction):
+        templates = await storage.aio.list_templates()
+        if not templates:
+            await reply(interaction, "No templates saved yet. `/new-event` with `save_as` creates one.")
+            return
+        lines = []
+        for t in templates:
+            line = f"**{t['name']}**: {t['exact_points']} exact / {t['partial_points']} wrong spot"
+            if t.get("description"):
+                line += f" ({t['description']})"
+            lines.append(line)
+        await reply(interaction, chunk_lines(lines, 1900)[0])
+
+    @app_commands.command(name="lock", description="Close predictions for the active event")
+    @is_admin()
+    async def lock(self, interaction: discord.Interaction):
+        week = await storage.aio.get_current_week()
+        if week is None:
+            await reply(interaction, "There's no active event.")
+            return
+        if storage.week_is_locked(week):
+            await reply(interaction, f"**{week['week_id']}** is already locked.")
+            return
+        await interaction.response.defer(ephemeral=True)
+        await storage.aio.set_week_locked(week["week_id"], True)
+        count = await storage.aio.count_submissions(week)
+
+        channel = await get_text_channel(interaction.client, "announcement_channel_id")
+        if channel is not None:
+            await channel.send(
+                embed=style.embed(
+                    f"{week['week_id']} is locked",
+                    ("Predictions are closed.", [row("Submissions", count)]),
+                )
+            )
+        await reply(interaction, f"Locked **{week['week_id']}** with {count} submission(s).")
+
+    @app_commands.command(name="unlock", description="Reopen predictions for the active event (undo a /lock)")
+    @is_admin()
+    async def unlock(self, interaction: discord.Interaction):
+        week = await storage.aio.get_current_week()
+        if week is None:
+            await reply(interaction, "There's no active event.")
+            return
+        if not storage.week_is_locked(week):
+            await reply(interaction, f"**{week['week_id']}** isn't locked.")
+            return
+        await interaction.response.defer(ephemeral=True)
+        await storage.aio.set_week_locked(week["week_id"], False)
+        extra = ""
+        if await storage.aio.week_has_results(week):
+            extra = " Results were already entered, so re-run `/end-week` after any changes to re-score."
+        channel = await get_text_channel(interaction.client, "announcement_channel_id")
+        if channel is not None:
+            await channel.send(
+                embed=style.embed(f"{week['week_id']} is open again", ("You can /pick again until the next lock.", None))
+            )
+        await reply(interaction, f"Reopened **{week['week_id']}**.{extra}")
+
+    @app_commands.command(
+        name="end-week", description="Enter the real results and score everyone (re-run to correct mistakes)"
+    )
+    @is_admin()
+    @app_commands.describe(week="Leave empty for the active event")
+    @app_commands.autocomplete(week=week_autocomplete)
+    async def end_week(self, interaction: discord.Interaction, week: str = ""):
+        week_id = week or await storage.aio.get_current_week_id()
+        wk = await storage.aio.get_week(week_id) if week_id else None
+        if wk is None:
+            await reply(interaction, "No such event. Pass a week id, or open one first.")
+            return
+
+        if wk["type"] == "ballot":
+            categories = await storage.aio.get_ballot_categories(week_id)
+            if not categories:
+                await reply(interaction, f"{week_id} has no categories, so there is nothing to enter answers for.")
+                return
+            prefill = "\n".join(f"{c['category']}: {c['correct_answer']}" for c in categories if c["correct_answer"].strip())
+            await interaction.response.send_modal(BallotResultsModal(week_id, prefill))
+            return
+
+        if not storage.rules_complete(await storage.aio.get_rules(week_id)):
+            await reply(
+                interaction,
+                f"The scoring rules for {week_id} are incomplete. Set them with `/set-points` first.",
+            )
+            return
+        existing = await storage.aio.get_results(week_id) or []
+
+        async def finish(i: discord.Interaction, canonical: list):
+            await _finish_results(i, week_id, canonical)
+
+        form = RankedForm(
+            noun="Rank",
+            prefill=existing,
+            source_note="saved results",
+            reject_prefix=(
+                "Results rejected, nothing was saved. (A title that really charted but isn't on the list needs "
+                "`/add-anime` first, then run `/end-week` again.)"
+            ),
+            finish=finish,
+        )
+        await form.open_first(interaction)
+
+    @app_commands.command(name="end-season", description="Close the season and post the final leaderboard")
+    @is_admin()
+    async def end_season(self, interaction: discord.Interaction):
+        scores = await storage.aio.list_scores()
+        if not scores:
+            await reply(interaction, "Nothing has been scored this season, so there's no leaderboard yet. Score a week with `/end-week` first.")
+            return
+
+        weeks = await storage.aio.list_weeks()
+        unscored = [w["week_id"] for w in weeks if not await storage.aio.week_has_results(w)]
+        confirmed_flow = bool(unscored)
+        if unscored:
+            view = ConfirmView(interaction.user.id, "End the season anyway")
+            await interaction.response.send_message(
+                f"{', '.join(unscored)} haven't been scored, so their points won't count in the final standings "
+                "(open ones will be locked). End the season anyway?",
+                view=view,
+                ephemeral=True,
+            )
+            await view.wait()
+            if not view.confirmed:
+                if view.timed_out:
+                    await interaction.edit_original_response(content="Timed out. Nothing changed.", view=None)
+                return
+        else:
+            await interaction.response.defer(ephemeral=True)
+
+        for w in weeks:
+            if not storage.week_is_locked(w):
+                await storage.aio.set_week_locked(w["week_id"], True)
+        await storage.aio.mark_season_ended()
+        posted = await _post_final_standings(interaction.client)
+        backup_problem = await backup.try_backup(interaction.client, "season end", keep=True)
+
+        text = "The season is over and the final standings are posted. Run `/reset` when you're ready for the next one."
+        if not posted:
+            text = "The season is marked as over, but I couldn't post to the announcement channel. Check `/setup` and my permissions."
+        text += " A backup of the final state was saved." if backup_problem is None else f" The final backup didn't go through: {backup_problem}"
+        if confirmed_flow:
+            await interaction.edit_original_response(content=text, view=None)
+        else:
+            await reply(interaction, text)
+
+
+async def setup(bot: commands.Bot):
+    await bot.add_cog(Weeks(bot))
