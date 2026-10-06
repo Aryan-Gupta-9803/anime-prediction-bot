@@ -92,8 +92,12 @@ def season_totals(scores: list) -> tuple:
 
 
 async def week_autocomplete(interaction: discord.Interaction, current: str):
-    weeks = [w for w in await storage.aio.list_weeks() if current.lower() in str(w["week_id"]).lower()]
-    return [app_commands.Choice(name=f"{w['week_id']} ({w['type']})", value=w["week_id"]) for w in weeks][-25:]
+    needle = current.lower()
+    weeks = [
+        w for w in await storage.aio.list_weeks()
+        if needle in str(w["week_id"]).lower() or needle in style.week_label(w["week_id"]).lower()
+    ]
+    return [app_commands.Choice(name=f"{style.week_label(w['week_id'])} ({w['type']})", value=w["week_id"]) for w in weeks][-25:]
 
 
 async def title_autocomplete(interaction: discord.Interaction, current: str):

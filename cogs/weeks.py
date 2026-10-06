@@ -70,8 +70,8 @@ async def _post_results(client: discord.Client, week_id: str, notes: list = ()) 
     scores = await storage.aio.list_scores(week_id)
     totals, names = season_totals(scores)
     board = _leaderboard_lines(totals, names) or ["Nobody submitted a prediction for this one."]
-    title = f"Results are in: {week_id}" + (f" ({week['type']})" if week else "")
-    greeting = f"Hello everyone! The **{week_id}** results are in!"
+    title = f"Results are in: {style.week_label(week_id)}" + (f" ({week['type']})" if week else "")
+    greeting = f"Hello everyone! The **{style.week_label(week_id)}** results are in!"
 
     actual = await storage.aio.get_results(week_id) or []
     top10 = [row(i, esc(t) if t else "-") for i, t in enumerate(actual, start=1)]
@@ -97,7 +97,7 @@ async def _finish_results(
     if not storage.rules_complete(await storage.aio.get_rules(week_id)):
         await reply(
             interaction,
-            f"The scoring rules for {week_id} are incomplete, so scoring would give everyone 0. "
+            f"The scoring rules for {style.week_label(week_id)} are incomplete, so scoring would give everyone 0. "
             "Set them with `/set-points` first.",
         )
         return
@@ -109,7 +109,7 @@ async def _finish_results(
     posted = await _post_results(interaction.client, week_id, notes)
     backup_problem = await backup.try_backup(interaction.client, f"{week_id} scored")
 
-    lines = [f"Results saved and **{scored}** prediction(s) scored for {week_id}.{summary}"]
+    lines = [f"Results saved and **{scored}** prediction(s) scored for {style.week_label(week_id)}.{summary}"]
     empty = actual.count("")
     if empty:
         lines.append(f"{empty} chart spot(s) were left empty, so nobody can score on them. Run `/end-week` again to fill them in.")
@@ -179,13 +179,13 @@ class Weeks(commands.Cog):
         if current and not storage.week_is_locked(current):
             await reply(
                 interaction,
-                f"**{current['week_id']}** is still open. Run `/lock` or `/end-week` before starting another.",
+                f"**{style.week_label(current['week_id'])}** is still open. Run `/lock` or `/end-week` before starting another.",
             )
             return False, ""
         reminder = ""
         if current and not await storage.aio.week_has_results(current):
             reminder = (
-                f"\nReminder: **{current['week_id']}** is locked but has no results yet. "
+                f"\nReminder: **{style.week_label(current['week_id'])}** is locked but has no results yet. "
                 f"Score it any time with `/end-week week:{current['week_id']}`."
             )
         return True, reminder
@@ -232,7 +232,7 @@ class Weeks(commands.Cog):
                 allowed_mentions=discord.AllowedMentions.none(),                # a host's note never pings anyone
             )
 
-        text = f"Started **{week_id}** ({week_type}): {exact_points} pts exact / {partial_points} pts wrong spot."
+        text = f"Started **{style.week_label(week_id)}** ({week_type}): {exact_points} pts exact / {partial_points} pts wrong spot."
         if save_as:
             text += f" Template **{save_as.strip()}** {'updated' if replaced else 'saved'}."
         if channel is None:
@@ -316,7 +316,7 @@ class Weeks(commands.Cog):
             await reply(interaction, "No such event. Pass a week id, or open one first.")
             return
         await storage.aio.set_week_points(week_id, exact_points, partial_points)
-        text = f"**{week_id}** now scores {exact_points} pts exact / {partial_points} pts wrong spot."
+        text = f"**{style.week_label(week_id)}** now scores {exact_points} pts exact / {partial_points} pts wrong spot."
         if await storage.aio.week_has_results(wk):
             text += " Results are already in, so run `/end-week` to re-score everyone."
         await reply(interaction, text)
@@ -344,7 +344,7 @@ class Weeks(commands.Cog):
             await reply(interaction, "There's no active event.")
             return
         if storage.week_is_locked(week):
-            await reply(interaction, f"**{week['week_id']}** is already locked.")
+            await reply(interaction, f"**{style.week_label(week['week_id'])}** is already locked.")
             return
         await interaction.response.defer(ephemeral=True)
         await storage.aio.set_week_locked(week["week_id"], True)
@@ -354,11 +354,11 @@ class Weeks(commands.Cog):
         if channel is not None:
             await channel.send(
                 embed=style.embed(
-                    f"{week['week_id']} is locked",
+                    f"{style.week_label(week['week_id'])} is locked",
                     ("Predictions are closed.", [row("Submissions", count)]),
                 )
             )
-        await reply(interaction, f"Locked **{week['week_id']}** with {count} submission(s).")
+        await reply(interaction, f"Locked **{style.week_label(week['week_id'])}** with {count} submission(s).")
 
     @app_commands.command(name="unlock", description="Reopen predictions for the active event (undo a /lock)")
     @is_admin()
@@ -368,7 +368,7 @@ class Weeks(commands.Cog):
             await reply(interaction, "There's no active event.")
             return
         if not storage.week_is_locked(week):
-            await reply(interaction, f"**{week['week_id']}** isn't locked.")
+            await reply(interaction, f"**{style.week_label(week['week_id'])}** isn't locked.")
             return
         await interaction.response.defer(ephemeral=True)
         await storage.aio.set_week_locked(week["week_id"], False)
@@ -378,9 +378,9 @@ class Weeks(commands.Cog):
         channel = await get_text_channel(interaction.client, "announcement_channel_id")
         if channel is not None:
             await channel.send(
-                embed=style.embed(f"{week['week_id']} is open again", ("You can /pick again until the next lock.", None))
+                embed=style.embed(f"{style.week_label(week['week_id'])} is open again", ("You can /pick again until the next lock.", None))
             )
-        await reply(interaction, f"Reopened **{week['week_id']}**.{extra}")
+        await reply(interaction, f"Reopened **{style.week_label(week['week_id'])}**.{extra}")
 
     @app_commands.command(
         name="end-week", description="Enter the real results and score everyone (re-run to correct mistakes)"
@@ -412,13 +412,13 @@ class Weeks(commands.Cog):
 
         given = given_ranks(rank_1, rank_2, rank_3, rank_4, rank_5, rank_6, rank_7, rank_8, rank_9, rank_10)
         if wk["type"] == "ballot":
-            await reply(interaction, f"{week_id} is an awards ballot, and ballots are switched off for now.")
+            await reply(interaction, f"{style.week_label(week_id)} is an awards ballot, and ballots are switched off for now.")
             return
 
         if not storage.rules_complete(await storage.aio.get_rules(week_id)):
             await reply(
                 interaction,
-                f"The scoring rules for {week_id} are incomplete. Set them with `/set-points` first.",
+                f"The scoring rules for {style.week_label(week_id)} are incomplete. Set them with `/set-points` first.",
             )
             return
         existing = await storage.aio.get_results(week_id) or []

@@ -56,7 +56,7 @@ def test_full_ranked_week_lifecycle(env):
         # open a week from the Standard template
         i = env.inter(env.admin)
         await env.weeks.event_template.callback(env.weeks, i, "Standard", None, "picks close Sunday")
-        assert "week-1" in i.all_text and "2 pts exact / 1 pts" in i.all_text
+        assert "Week 1" in i.all_text and "2 pts exact / 1 pts" in i.all_text
         content, ann, _ = env.announce.sent[-1]
         assert "Scoring :: 2 pts for an exact spot, 1 pt if it's on the chart elsewhere" in ann.description
         assert "Note ::" not in ann.description and "picks close Sunday" not in ann.description
@@ -113,7 +113,7 @@ def test_full_ranked_week_lifecycle(env):
         await env.weeks.lock.callback(env.weeks, i)
         assert "2 submission" in i.all_text
         lock_post = env.announce.sent[-1][1].description
-        assert lock_post.startswith("# week-1 is locked") and "Submissions :: 2" in lock_post
+        assert lock_post.startswith("# Week 1 is locked") and "Submissions :: 2" in lock_post
         out = await env.pick(env.carol, RESULTS)
         assert "locked" in out.all_text and storage.get_prediction("week-1", str(env.carol.id)) is None
 
@@ -156,7 +156,7 @@ def test_full_ranked_week_lifecycle(env):
         # next week can start; the finished one needs no reminder
         i = env.inter(env.admin)
         await env.weeks.event_template.callback(env.weeks, i, "First Week Advantage", None, "")
-        assert "week-2" in i.all_text and "5 pts exact / 2 pts" in i.all_text
+        assert "Week 2" in i.all_text and "5 pts exact / 2 pts" in i.all_text
 
     run(scenario())
 
@@ -283,19 +283,19 @@ def test_help_and_help_admin_reflect_state_and_fit_discord_limits(env):
         i = env.inter(env.admin); await env.help.help_admin.callback(env.help, i)
         text = i.all_text
         assert "[ok] Announcements" in text and "[ok] Picks" in text and "[ok] Anime list: 13 titles" in text
-        assert "week-1 (standard) is open, 1 submission" in text
+        assert "Week 1 (standard) is open, 1 submission" in text
         assert len(i.last.embed) < 6000 and all(len(f.value) <= 1024 for f in i.last.embed.fields)
         for cmd in ("/setup", "/start", "/end-week", "/unlock", "/help-admin", "/reset"):
             assert cmd in text
 
         i = env.inter(env.alice); await env.help.help_cmd.callback(env.help, i)
         text = i.all_text
-        assert "week-1" in text and "open" in text and "2" in text and "1 member(s)" in text and "deadline Sunday" in text
+        assert "Week 1" in text and "open" in text and "2" in text and "1 member(s)" in text and "deadline Sunday" in text
         assert len(i.last.embed) < 6000 and all(len(f.value) <= 1024 for f in i.last.embed.fields)
 
         await env.weeks.lock.callback(env.weeks, env.inter(env.admin))
         i = env.inter(env.admin); await env.help.help_admin.callback(env.help, i)
-        assert "[todo] week-1 is locked" in i.all_text
+        assert "[todo] Week 1 is locked" in i.all_text
         i = env.inter(env.alice); await env.help.help_cmd.callback(env.help, i)
         assert "waiting for the host" in i.all_text
 

@@ -55,7 +55,7 @@ def test_end_season_posts_the_full_final_standings_and_closes_the_season(env):
         await env.start_season(TITLES)
         j = env.inter(env.admin)
         await env.weeks.event_template.callback(env.weeks, j, "Standard", None, "")
-        assert "week-1" in j.all_text
+        assert "Week 1" in j.all_text
     run(scenario())
 
 

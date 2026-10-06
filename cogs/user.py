@@ -36,7 +36,7 @@ async def _open_week_or_explain(interaction: discord.Interaction, week_id: str):
         await reply(interaction, "That event has ended or been replaced. Nothing was saved; run `/pick` again.")
         return None
     if storage.week_is_locked(week):
-        await reply(interaction, f"Predictions for {week_id} were locked before you submitted. Nothing was saved.")
+        await reply(interaction, f"Predictions for {style.week_label(week_id)} were locked before you submitted. Nothing was saved.")
         return None
     return week
 
@@ -85,7 +85,7 @@ async def _finish_picks(interaction: discord.Interaction, week_id: str, canonica
     existing = await storage.aio.get_prediction(week_id, user_id)
     embed = style.embed(
         f"{esc(interaction.user.display_name)}'s picks",
-        (week_id, [row(i, esc(t) if t else "-") for i, t in enumerate(canonical, start=1)]),
+        (style.week_label(week_id), [row(i, esc(t) if t else "-") for i, t in enumerate(canonical, start=1)]),
         footer="Change them any time before the lock with /pick · Last edited",
         timestamp=True,
     )
@@ -113,7 +113,7 @@ async def _prefill_ranks(week_id: str, user_id: str, valid_titles: list):
         ranks, note = storage.prediction_ranks(existing), ""
     else:
         last = await storage.aio.get_last_picks(user_id)
-        ranks, note = (storage.prediction_ranks(last), f"copied from {last['week_id']}") if last else ([""] * 10, "")
+        ranks, note = (storage.prediction_ranks(last), f"copied from {style.week_label(last['week_id'])}") if last else ([""] * 10, "")
     by_norm = {storage.normalize(t): t for t in valid_titles}
     cleaned = [by_norm.get(storage.normalize(t), "") if t else "" for t in ranks]
     return cleaned, (note if any(cleaned) else "")
@@ -176,13 +176,13 @@ class UserCommands(commands.Cog):
             await reply(interaction, "No event is open right now.")
             return
         if storage.week_is_locked(week):
-            await reply(interaction, f"Predictions are locked for {week['week_id']}.")
+            await reply(interaction, f"Predictions are locked for {style.week_label(week['week_id'])}.")
             return
 
         user_id = str(interaction.user.id)
         given = given_ranks(rank_1, rank_2, rank_3, rank_4, rank_5, rank_6, rank_7, rank_8, rank_9, rank_10)
         if week["type"] == "ballot":
-            await reply(interaction, f"{week['week_id']} is an awards ballot, and ballots are switched off for now.")
+            await reply(interaction, f"{style.week_label(week['week_id'])} is an awards ballot, and ballots are switched off for now.")
             return
 
         week_id = week["week_id"]
@@ -226,9 +226,9 @@ class UserCommands(commands.Cog):
             submitted = await storage.aio.get_prediction(week_id, user_id)
             await reply(
                 interaction,
-                f"Your picks for {week_id} are in, but it hasn't been scored yet."
+                f"Your picks for {style.week_label(week_id)} are in, but it hasn't been scored yet."
                 if submitted
-                else f"You didn't submit picks for {week_id}.",
+                else f"You didn't submit picks for {style.week_label(week_id)}.",
             )
             return
 
@@ -239,7 +239,7 @@ class UserCommands(commands.Cog):
             footer = f"Season total: {totals[user_id]} pts (rank {rank} of {len(totals)})"
         lines = _breakdown_lines(mine["breakdown_json"])
         embed = style.embed(
-            f"Your score: {week_id}",
+            f"Your score: {style.week_label(week_id)}",
             (pts(storage.score_points(mine)), [clip("\n".join(lines), 3500)] if lines else None),
             footer=footer,
         )
@@ -259,7 +259,7 @@ class UserCommands(commands.Cog):
         lines = [row(rank, f"**{esc(names[uid])}** — {pts(points)}") for rank, uid, points in rows[:20]]
         mine = next(((rank, pts) for rank, uid, pts in rows if uid == str(interaction.user.id)), None)
         embed = style.embed(
-            f"Leaderboard: {week}" if week else "Season leaderboard",
+            f"Leaderboard: {style.week_label(week)}" if week else "Season leaderboard",
             (None, lines),
             footer=f"You: rank {mine[0]} with {mine[1]} pts" if mine else "You have no points yet",
         )

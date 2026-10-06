@@ -50,7 +50,7 @@ async def _event_status(week) -> str:
 
     rule = season_rules.get_rule(await storage.aio.get_season_rule())
     extra = "" if season_rules.is_standard(rule) else f"\nSeason rule: **{rule.name}** (see below)."
-    text = f"**{week_id}** ({kind}) is {state}.\nScoring: {scoring}.{extra}\n{count} member(s) have submitted."
+    text = f"**{style.week_label(week_id)}** ({kind}) is {state}.\nScoring: {scoring}.{extra}\n{count} member(s) have submitted."
     if week.get("note"):
         text += f"\nNote: {week['note']}"
     return text
@@ -175,11 +175,11 @@ class Help(commands.Cog):
         else:
             count = await storage.aio.count_submissions(week)
             if not storage.week_is_locked(week):
-                checklist.append(f"[ok] {week['week_id']} ({week['type']}) is open, {count} submission(s). `/lock` when ready.")
+                checklist.append(f"[ok] {style.week_label(week['week_id'])} ({week['type']}) is open, {count} submission(s). `/lock` when ready.")
             elif not await storage.aio.week_has_results(week):
-                checklist.append(f"[todo] {week['week_id']} is locked, {count} submission(s), waiting for `/end-week`.")
+                checklist.append(f"[todo] {style.week_label(week['week_id'])} is locked, {count} submission(s), waiting for `/end-week`.")
             else:
-                checklist.append(f"[ok] {week['week_id']} is scored. Start the next event whenever you like.")
+                checklist.append(f"[ok] {style.week_label(week['week_id'])} is scored. Start the next event whenever you like.")
 
         embed = style.embed("Host guide", ("Setup status, the season lifecycle and fixing mistakes", None))
         embed.add_field(name="Setup status", value=clip("\n".join(checklist), 1024), inline=False)

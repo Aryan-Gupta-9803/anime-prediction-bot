@@ -144,7 +144,7 @@ def test_quick_edit_starts_from_last_weeks_picks_when_this_week_has_none(env):
         await env.weeks.event_template.callback(env.weeks, env.inter(env.admin), "Standard", None, "")
 
         out = await quick_pick(env, env.alice, rank_2="86")
-        assert "copied from week-1" in out.all_text
+        assert "copied from Week 1" in out.all_text
         assert saved(env, env.alice, "week-2") == [RESULTS[0], "86"] + RESULTS[2:]
 
         # titles that left the season list are not carried over
@@ -207,7 +207,7 @@ def test_bare_pick_says_where_carried_over_picks_came_from_and_drops_removed_tit
         i = env.inter(env.alice)
         await env.user_cog.pick.callback(env.user_cog, i)
         guide = i.sent[-1].embed.description
-        assert "Your picks: Week 2 (copied from week-1)" in guide and f"1 :: {RESULTS[0]}" in guide
+        assert "Your picks: Week 2 (copied from Week 1)" in guide and f"1 :: {RESULTS[0]}" in guide
         await env.season.remove_anime.callback(env.season, env.inter(env.admin), "Bleach")
         i = env.inter(env.alice)
         await env.user_cog.pick.callback(env.user_cog, i)
@@ -219,7 +219,7 @@ def test_bare_pick_says_where_carried_over_picks_came_from_and_drops_removed_tit
         await env.weeks.event_template.callback(env.weeks, env.inter(env.admin), "Standard", None, "")
         i = env.inter(env.alice)
         await env.user_cog.pick.callback(env.user_cog, i)
-        assert "Your picks: Week 1 (copied from week-1)" in i.sent[-1].embed.description
+        assert "Your picks: Week 1 (copied from Week 1)" in i.sent[-1].embed.description
         out = await quick_pick(env, env.alice, rank_10="Vinland Saga")
         assert "Saved" in out.all_text and saved(env, env.alice)[0] == RESULTS[0]
     run(scenario())
@@ -341,4 +341,44 @@ def test_pick_and_end_week_offer_ten_optional_suggesting_rank_fields(env):
         week = [o for o in bot.tree.get_command("end-week").to_dict(bot.tree)["options"] if o["name"] == "week"][0]
         assert week.get("autocomplete"), "the week field keeps its own suggestions"
         await commands.Bot.close(bot)
+    run(scenario())
+
+
+def test_people_see_week_n_everywhere_but_typed_values_stay_ids(env):
+    from common import week_autocomplete
+
+    async def scenario():
+        await start_week(env)
+        await full_pick(env, env.alice)
+        # the prediction embed (the one in the picks channel): "Week 1", never "week-1"
+        embed = env.picks.sent[0][1]
+        assert "### Week 1\n" in embed.description and "week-1" not in embed.description
+
+        await env.weeks.lock.callback(env.weeks, env.inter(env.admin))
+        lock = env.announce.sent[-1][1].description
+        assert lock.startswith("# Week 1 is locked") and "week-1" not in lock
+        await env.weeks.unlock.callback(env.weeks, env.inter(env.admin))
+        assert env.announce.sent[-1][1].description.startswith("# Week 1 is open again")
+        await env.weeks.lock.callback(env.weeks, env.inter(env.admin))
+
+        j = env.inter(env.admin)
+        await env.weeks.end_week.callback(env.weeks, j, "")
+        out = await env.submit(j, "\n".join(RESULTS))
+        assert "scored for Week 1" in out.all_text
+        results = env.announce.sent[-1]
+        assert results[1].description.startswith("# Results are in: Week 1") and "**Week 1** results" in results[0]
+
+        k = env.inter(env.alice)
+        await env.user_cog.my_score.callback(env.user_cog, k, "")
+        assert k.last.embed.description.startswith("# Your score: Week 1")
+        k = env.inter(env.alice)
+        await env.user_cog.leaderboard.callback(env.user_cog, k, "week-1")
+        assert k.last.embed.description.startswith("# Leaderboard: Week 1")
+
+        # the week picker shows "Week 1" but still hands the command the real id, and finds it either way
+        i = env.inter(env.alice)
+        for typed in ("", "week", "week-1", "Week 1", "1"):
+            choices = await week_autocomplete(i, typed)
+            assert [(c.name, c.value) for c in choices] == [("Week 1 (standard)", "week-1")], typed
+        assert await week_autocomplete(i, "zzz") == []
     run(scenario())
