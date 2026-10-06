@@ -22,6 +22,13 @@ from style import row
 from validation import parse_lines
 
 
+def rule_embed(rule) -> "discord.Embed":
+    return style.embed(f"Season rule: {rule.name}", (None, [rule.explain]))
+
+
+RULE_CHOICES = [app_commands.Choice(name=r.name, value=r.key) for r in season_rules.RULES.values()]
+
+
 class StartModal(SafeModal, title="Season anime list"):
     entries = discord.ui.TextInput(
         label="One title per line (no numbering)",
@@ -66,7 +73,7 @@ class StartModal(SafeModal, title="Season anime list"):
                 content="Hello everyone! The **new season** is here, and these are the anime you can predict!",
             )
             if not season_rules.is_standard(rule):
-                await channel.send(embed=style.embed(f"Season rule: {rule.name}", (None, [rule.explain])))
+                await channel.send(embed=rule_embed(rule))
 
         text = f"Season started with **{saved}** titles"
         text += f" ({dropped} duplicate line(s) ignored)." if dropped else "."
@@ -127,7 +134,7 @@ class Season(commands.Cog):
     @app_commands.command(name="start", description="Start a new season: set the valid anime list and the season rule")
     @is_admin()
     @app_commands.describe(rule="Special scoring for the whole season (leave empty for normal scoring)")
-    @app_commands.choices(rule=[app_commands.Choice(name=r.name, value=r.key) for r in season_rules.RULES.values()])
+    @app_commands.choices(rule=RULE_CHOICES)
     async def start(self, interaction: discord.Interaction, rule: app_commands.Choice[str] = None):
         if not await storage.aio.get_config("announcement_channel_id"):
             await reply(interaction, "Run `/setup` first so I know which channels to use.")
@@ -141,6 +148,46 @@ class Season(commands.Cog):
             )
             return
         await interaction.response.send_modal(StartModal(rule.value if rule else season_rules.STANDARD_KEY))
+
+    @app_commands.command(name="season-rule", description="Set or change this season's scoring rule (applies to weeks scored from now on)")
+    @is_admin()
+    @app_commands.describe(rule="The rule to use for the rest of the season")
+    @app_commands.choices(rule=RULE_CHOICES)
+    async def season_rule(self, interaction: discord.Interaction, rule: app_commands.Choice[str]):
+        if not await storage.aio.get_anime_list():
+            await reply(interaction, "No season is running yet. Choose the rule when you run `/start`.")
+            return
+        if await storage.aio.season_ended():
+            await reply(interaction, "The season has ended. Run `/reset` and `/start` the next one, and choose the rule there.")
+            return
+        current = season_rules.get_rule(await storage.aio.get_season_rule())
+        chosen = season_rules.get_rule(rule.value)
+        if chosen.key == current.key:
+            await reply(interaction, f"The season rule is already **{chosen.name}**. Nothing changed.")
+            return
+
+        await interaction.response.defer(ephemeral=True)
+        await storage.aio.set_season_rule(chosen.key)
+        channel = await get_text_channel(interaction.client, "announcement_channel_id")
+        posted = False
+        if channel is not None:
+            try:
+                await channel.send(
+                    content="Hello everyone! The **season rule** has changed.", embed=rule_embed(chosen)
+                )
+                posted = True
+            except discord.Forbidden:
+                pass
+        scored = [w["week_id"] for w in await storage.aio.list_weeks() if await storage.aio.week_has_results(w)]
+        text = f"Season rule is now **{chosen.name}** (it was **{current.name}**). Weeks scored from now on use it."
+        if scored:
+            text += (
+                f"\n{', '.join(scored)} already scored under the old rule and keep those scores. "
+                "Run `/end-week week:<id>` again for any week you want re-scored."
+            )
+        if not posted:
+            text += "\nI couldn't post the announcement. Check `/setup` and my permissions."
+        await reply(interaction, text)
 
     @app_commands.command(name="add-anime", description="Add one anime to the current season's valid list")
     @is_admin()

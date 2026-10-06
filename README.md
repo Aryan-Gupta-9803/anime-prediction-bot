@@ -38,6 +38,7 @@ setup checklist (including backup status), the lifecycle, a command list and how
 | `/help-admin` | host | Setup checklist, lifecycle, commands, fixing mistakes |
 | `/setup` | host | Choose announcements and picks channels; warns about missing bot permissions |
 | `/start [rule]` | host | New season: paste the valid titles and optionally pick a season rule (refused if a season is already running) |
+| `/season-rule rule` | host | Set or change the season's rule mid-season (applies to weeks scored from then on) |
 | `/add-anime` `/remove-anime` | host | Adjust the title list mid-season |
 | `/event-template template [type] [note]` | host | Open a week with a saved scoring template |
 | `/new-event exact_points partial_points [type] [note] [save_as]` | host | Open a week with custom scoring |
@@ -101,12 +102,18 @@ Summer 2026 sheet:
 the list, shown on each week's announcement and in `/help`, and used whenever a week is scored or re-scored. Rules live
 in `season_rules.py`: add a scoring function and one entry in `RULES` and it appears in `/start` by itself.
 
-**Minority Multiplier** (the first one): for the real top 3, each title gets a multiplier from how few players had it in
-their ten (anywhere). 40% of players or more: 1x. Only one player: 4x. In between it slides in a straight line, rounded to
-the nearest 0.5x; with 10 players that is 1 player 4x, 2 players 3x, 3 players 2x, 4 or more 1x. The multiplier applies to the points a player earns on that title (exact or wrong spot) and is not rounded, so a
-score can have a half point (a 1-point wrong-spot match at 1.5x is 1.5). It never touches penalties or titles outside the top 3. Weeks with fewer than 5 players have no multipliers.
-The results post lists each top-3 title's multiplier, and `/my-score` shows it on the rows it changed. The knobs
-(`MAX_MULTIPLIER`, `CROWD_SHARE`, `MIN_PLAYERS`) are at the top of the minority section in `scoring.py`.
+**Minority Multiplier** (the first one): each player's own top 3 picks (ranks 1-3) can earn a bonus multiplier from
+how few players had that same title in their own top 3. 40% of players or more: 1x. Only one player: 3x. In between
+it slides in a straight line, rounded to the nearest 0.5x; with 10 players that is 1 player 3x, 2 players 2.5x,
+3 players 1.5x, 4 or more 1x. The multiplier applies to the points that pick earns (exact spot or wrong spot) and is
+not rounded, so a score can have a half point (a 1-point wrong-spot match at 1.5x is 1.5). It never touches
+penalties, picks that earn nothing, or ranks 4-10, and a title in someone's ranks 4-10 doesn't count toward its
+popularity. Weeks with fewer than 5 players have no multipliers. The results post lists each title that earned a bonus
+and its multiplier, and `/my-score` shows it on the rows it changed. The knobs (`MAX_MULTIPLIER`, `CROWD_SHARE`,
+`BONUS_RANKS`, `MIN_PLAYERS`) are at the top of the Minority Multiplier section in `scoring.py`.
+
+`/season-rule` changes the rule mid-season (it posts the new rule in announcements). Weeks already scored keep their
+scores until you re-run `/end-week week:<id>` for them; weeks scored from then on use the new rule.
 
 Not built: the joker weeks, the unused "RESERVED" upper/lower-half idea from the original workbook, and (switched off
 for now) the awards ballot. The ballot's storage and scoring code is still in the project so old backups restore and

@@ -188,7 +188,7 @@ class Help(commands.Cog):
             name="Once per season (about every 3 months)",
             value=(
                 "1. `/setup` pick the announcements and picks channels (once).\n"
-                "2. `/start` paste the season's titles, one per line (10 or more), and optionally choose a season rule (e.g. Minority Multiplier). Both are posted in announcements.\n"
+                "2. `/start` paste the season's titles, one per line (10 or more), and optionally choose a season rule (e.g. Minority Multiplier). Both are posted in announcements. Change the rule mid-season with `/season-rule` (it applies to weeks scored from then on).\n"
                 "3. Run the weekly flow below.\n"
                 "4. `/end-season` posts the final leaderboard and closes the season.\n"
                 "5. `/reset` posts a backup file, then clears it; then `/start` again. Channels and templates "
@@ -213,7 +213,7 @@ class Help(commands.Cog):
         embed.add_field(
             name="Host commands",
             value=(
-                "`/setup` `/start` `/add-anime` `/remove-anime` `/reset`\n"
+                "`/setup` `/start` `/season-rule` `/add-anime` `/remove-anime` `/reset`\n"
                 "`/event-template` `/new-event` `/set-points` `/list-templates`\n"
                 "`/lock` `/unlock` `/end-week [week]` `/end-season`\n"
                 "`/backup` `/restore [file]` `/export`\n"

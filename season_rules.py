@@ -36,11 +36,10 @@ MINORITY = SeasonRule(
     key="minority-multiplier",
     name="Minority Multiplier",
     explain=(
-        "For the real top 3, each title earns a bonus multiplier based on how few players had it in their ten. "
-        f"If {round(scoring.CROWD_SHARE * 100)}% or more of the players had it, it's 1x. If only one player "
-        f"had it, it's {scoring.MAX_MULTIPLIER:g}x. In between it slides in steps of 0.5x. "
-        "It multiplies the points you earn on that title, exact spot or not, so scores can have half points. "
-        f"Weeks with fewer than {scoring.MIN_PLAYERS} players have no multipliers."
+        "For every week, your top 3 picks have the chance to earn a Bonus Multiplier based on how few players had "
+        "it in their top 3 predictions.\n\n"
+        f"You can earn up to a {scoring.MAX_MULTIPLIER:g}x multiplier, and even overtake the regular points scorers "
+        "by choosing an unconventional option!"
     ),
     score=scoring.compute_minority_scores,
 )

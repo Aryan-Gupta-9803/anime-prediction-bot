@@ -33,19 +33,20 @@ def compute_score(predicted: list, actual: list, rules: dict):
 
 
 # ---- Minority Multiplier ---------------------------------------------------------------------------------
-# The knobs are all here. A title in the real top 3 earns a multiplier from how few players had it in
-# their ten: MAX_MULTIPLIER when only one player did, 1x when CROWD_SHARE or more of the players did, and
-# a straight line (in share of players) between, rounded to the nearest 0.5 so the numbers stay easy to follow.
-MAX_MULTIPLIER = 4.0
+# A player's own top BONUS_RANKS picks can earn a bonus multiplier from how few players had that same title in
+# their own top BONUS_RANKS: MAX_MULTIPLIER when only that one player did, 1x when CROWD_SHARE or more of the
+# players did, and a straight line (in share of players) between, rounded to the nearest 0.5 so the numbers
+# stay easy to follow.
+MAX_MULTIPLIER = 3.0
 CROWD_SHARE = 0.40
-TOP_N = 3
+BONUS_RANKS = 3
 MIN_PLAYERS = 5          # with fewer players nothing can be called a minority, so everything stays 1x
 
 
 def minority_multiplier(picked: int, players: int) -> float:
     """Multiplier (1.0 to MAX_MULTIPLIER, always a multiple of 0.5) for a title that `picked` of `players`
-    players had. One player alone gets the maximum; CROWD_SHARE of the players or more gets 1x. For 10
-    players that is 1 -> 4x, 2 -> 3x, 3 -> 2x, 4 or more -> 1x."""
+    players had in their top picks. One player alone gets the maximum; CROWD_SHARE of the players or more
+    gets 1x. For 10 players that is 1 -> 3x, 2 -> 2.5x, 3 -> 1.5x, 4 or more -> 1x."""
     if players <= 0:
         return 1.0
     if picked <= 1:
@@ -58,39 +59,44 @@ def minority_multiplier(picked: int, players: int) -> float:
 
 
 def compute_minority_scores(predictions: list, actual: list, rules: dict):
-    """Scores every player's ten with compute_score, then multiplies the points earned on each of the real
-    top 3 titles (exact spot or wrong spot) by that title's multiplier. Penalties (negative points) and
-    zero-point rows are left alone. Multipliers are multiples of 0.5, so a score can have a half point (7.5);
+    """Scores every player's ten with compute_score, then multiplies the points a player earns on their
+    own rank 1-3 picks (exact spot or wrong spot) by that title's multiplier. The multiplier comes from how
+    many players had the same title in their own top 3. Penalties (negative points), zero-point rows and
+    ranks 4-10 are left alone. Multipliers are multiples of 0.5, so a score can have a half point (7.5);
     points are never rounded.
 
     predictions: one list of ten titles per player. Returns (results, notes): results is one
     (total, breakdown) per player in the same order, and rows that were multiplied carry a "multiplier"
-    key; notes is [(label, text)] describing each top-3 title's multiplier, for the results post.
+    key; notes is [(label, text)] for the results post: the titles that earned a bonus, biggest first.
     """
     players = len(predictions)
     multipliers, notes = {}, []
-    top = [t for t in actual[:TOP_N] if t]
     if players < MIN_PLAYERS:
-        if top:
-            notes.append(("Multipliers", f"off this week: {players} player(s), needs {MIN_PLAYERS}"))
+        notes.append(("Multipliers", f"off this week: {players} player(s), needs {MIN_PLAYERS}"))
     else:
-        for title in top:
-            picked = sum(1 for p in predictions if normalize(title) in {normalize(x) for x in p if x})
-            mult = minority_multiplier(picked, players)
-            multipliers[normalize(title)] = mult
-            notes.append((title, f"x{mult:g} ({picked} of {players} players had it)"))
+        counts = {}
+        for p in predictions:
+            for title in {normalize(t) for t in p[:BONUS_RANKS] if t}:
+                counts[title] = counts.get(title, 0) + 1
+        multipliers = {title: (minority_multiplier(n, players), n) for title, n in counts.items()}
 
-    results = []
+    results, earned = [], {}
     for p in predictions:
         _, breakdown = compute_score(p, actual, rules)
         total = 0
         for item in breakdown:
-            mult = multipliers.get(normalize(item["predicted"]), 1.0) if item["predicted"] else 1.0
-            if mult != 1.0 and item["points"] > 0:
-                item["points"] = num(item["points"] * mult)       # a multiple of 0.5, so exact in floating point
-                item["multiplier"] = mult
+            if item["position"] <= BONUS_RANKS and item["predicted"] and item["points"] > 0:
+                mult, picked = multipliers.get(normalize(item["predicted"]), (1.0, 0))
+                if mult != 1.0:
+                    item["points"] = num(item["points"] * mult)       # a multiple of 0.5, so exact in floating point
+                    item["multiplier"] = mult
+                    earned[normalize(item["predicted"])] = (item["predicted"], mult, picked)
             total += item["points"]
         results.append((num(total), breakdown))
+
+    ordered = sorted(earned.values(), key=lambda e: (-e[1], e[2], e[0].casefold()))
+    for title, mult, picked in ordered:          # at most 10: only titles on the real chart can earn points
+        notes.append((title, f"x{mult:g} ({picked} of {players} players had it in their top {BONUS_RANKS})"))
     return results, notes
 
 

@@ -24,7 +24,7 @@ def test_admin_commands_reject_regular_members_and_accept_hosts(env):
     admin_only = [env.season.setup_channels, env.season.start, env.season.reset, env.weeks.new_event,
                   env.weeks.lock, env.weeks.end_week, env.help.help_admin,
                   env.weeks.set_points, env.backups.backup_now, env.backups.restore, env.backups.export,
-                  env.weeks.end_season]
+                  env.weeks.end_season, env.season.season_rule]
     from fakes import FakeUser
     host_by_role = FakeUser("roleman", roles=["Event Host"])
     for cmd in admin_only:
@@ -357,7 +357,7 @@ def test_every_command_is_valid_for_discord(env):
             await bot.load_extension(ext)
         names = sorted(c.name for c in bot.tree.get_commands())
         assert names == sorted([
-            "setup", "start", "add-anime", "remove-anime", "reset", "event-template", "new-event",
+            "setup", "start", "add-anime", "remove-anime", "reset", "event-template", "new-event", "season-rule",
             "list-templates", "lock", "unlock", "end-week", "pick", "my-score", "leaderboard", "anime-list",
             "help", "help-admin", "set-points", "backup", "restore", "export", "end-season"]), names
         for c in bot.tree.get_commands():
