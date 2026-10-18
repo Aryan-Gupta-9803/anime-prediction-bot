@@ -32,6 +32,75 @@ def compute_score(predicted: list, actual: list, rules: dict):
     return total, breakdown
 
 
+# ---- Ups and Downs ----------------------------------------------------------------------------------------
+# Besides the ranked top 10, members guess how many titles will climb (Ups) and how many will fall (Downs)
+# compared with the previous week's chart. Each guess earns UPDOWN_MAX points when exact and one point less
+# for every step away (off by 1 = 4, by 2 = 3, ... by 5 or more = 0).
+UPDOWN_MAX = 5
+# A title that wasn't on last week's chart (a new entry), or that fell off it, has no rank to compare. By default
+# neither counts as an up or a down; flip these to count new entries as ups and drop-offs as downs.
+COUNT_NEW_AS_UPS = False
+COUNT_DROPPED_AS_DOWNS = False
+
+
+def chart_movement(previous: list, current: list) -> dict:
+    """How this week's chart moved against last week's: the titles that went up, went down, stayed put, are new, or
+    dropped off, plus the resulting counts (actual_ups / actual_downs) that guesses are scored against."""
+    before = {normalize(t): i for i, t in enumerate(previous) if t}
+    now = {normalize(t) for t in current if t}
+    moved = {"ups": [], "downs": [], "same": [], "new": [], "dropped": []}
+    for i, title in enumerate(current):
+        if not title:
+            continue
+        was = before.get(normalize(title))
+        if was is None:
+            moved["new"].append(title)
+        elif i < was:
+            moved["ups"].append(title)
+        elif i > was:
+            moved["downs"].append(title)
+        else:
+            moved["same"].append(title)
+    moved["dropped"] = [t for t in previous if t and normalize(t) not in now]
+    moved["actual_ups"] = len(moved["ups"]) + (len(moved["new"]) if COUNT_NEW_AS_UPS else 0)
+    moved["actual_downs"] = len(moved["downs"]) + (len(moved["dropped"]) if COUNT_DROPPED_AS_DOWNS else 0)
+    return moved
+
+
+def updown_explainer(previous_label: str) -> str:
+    """The rules of an Ups and Downs week in plain words, for the announcement."""
+    steps = ", ".join(f"off by {n} is {UPDOWN_MAX - n}" for n in range(1, UPDOWN_MAX - 1))
+    counted = [
+        "a new entry counts as an up" if COUNT_NEW_AS_UPS else "new entries don't count",
+        "a title that drops off the chart counts as a down" if COUNT_DROPPED_AS_DOWNS else "titles that drop off don't count",
+    ]
+    return (
+        f"Also guess how many titles on the chart will climb (ups) and how many will fall (downs) compared with "
+        f"{previous_label}. An exact guess earns {UPDOWN_MAX} pts, {steps}, and so on down to 0, separately for ups "
+        f"and downs. A title only counts as up or down if it was on {previous_label}'s chart too ({counted[0]}; {counted[1]})."
+    )
+
+
+def updown_points(guess: int, actual: int) -> int:
+    return max(0, UPDOWN_MAX - abs(int(guess) - int(actual)))
+
+
+def compute_updown_score(pick, movement: dict):
+    """pick: (ups, downs) a member guessed, or None. Returns (points, [two breakdown rows])."""
+    rows, total = [], 0
+    for index, (label, actual) in enumerate((("Ups", movement["actual_ups"]), ("Downs", movement["actual_downs"]))):
+        if pick is None:
+            points, shown, reason = 0, "-", "no prediction"
+        else:
+            guess = int(pick[index])
+            points = updown_points(guess, actual)
+            shown = f"{guess} (actual {actual})"
+            reason = "exact" if guess == actual else f"off by {abs(guess - actual)}"
+        total += points
+        rows.append({"position": label, "predicted": shown, "points": points, "reason": reason})
+    return total, rows
+
+
 # ---- Minority Multiplier ---------------------------------------------------------------------------------
 # A player's own top BONUS_RANKS picks can earn a bonus multiplier from how few players had that same title in
 # their own top BONUS_RANKS: MAX_MULTIPLIER when only that one player did, 1x when CROWD_SHARE or more of the

@@ -5,6 +5,7 @@ from discord import app_commands
 from discord.ext import commands
 
 import backup
+import event_types
 import season_rules
 import storage
 import style
@@ -50,7 +51,10 @@ async def _event_status(week) -> str:
 
     rule = season_rules.get_rule(await storage.aio.get_season_rule())
     extra = "" if season_rules.is_standard(rule) else f"\nSeason rule: **{rule.name}** (see below)."
-    text = f"**{style.week_label(week_id)}** ({kind}) is {state}.\nScoring: {scoring}.{extra}\n{count} member(s) have submitted."
+    fields = event_types.get(kind).fields
+    if fields:
+        extra += "\nAlso fill in on `/pick`: " + ", ".join(f"`{f.key}`" for f in fields) + "."
+    text = f"**{style.week_label(week_id)}** ({event_types.type_label(kind)}) is {state}.\nScoring: {scoring}.{extra}\n{count} member(s) have submitted."
     if week.get("note"):
         text += f"\nNote: {week['note']}"
     return text
@@ -175,7 +179,7 @@ class Help(commands.Cog):
         else:
             count = await storage.aio.count_submissions(week)
             if not storage.week_is_locked(week):
-                checklist.append(f"[ok] {style.week_label(week['week_id'])} ({week['type']}) is open, {count} submission(s). `/lock` when ready.")
+                checklist.append(f"[ok] {style.week_label(week['week_id'])} ({event_types.type_label(week['type'])}) is open, {count} submission(s). `/lock` when ready.")
             elif not await storage.aio.week_has_results(week):
                 checklist.append(f"[todo] {style.week_label(week['week_id'])} is locked, {count} submission(s), waiting for `/end-week`.")
             else:
@@ -199,7 +203,8 @@ class Help(commands.Cog):
             name="Every week",
             value=(
                 "1. Open it: `/event-template` (saved points, e.g. Standard 2/1) or `/new-event` (custom points; "
-                "`save_as` keeps them as a template).\n"
+                "`save_as` keeps them as a template). Pick `week_type: ups and downs` for the Ups and Downs event "
+                "(last week must be scored first).\n"
                 "2. Members use `/pick`; their picks appear in the picks channel.\n"
                 "3. `/lock` when you're ready. Nothing closes automatically.\n"
                 "4. `/end-week` enter the real top 10 in a two-step form (1-5, then 6-10), or fix single ranks with the `rank-` fields "

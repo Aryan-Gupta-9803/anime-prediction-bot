@@ -41,8 +41,8 @@ setup checklist (including backup status), the lifecycle, a command list and how
 | `/start [rule]` | host | New season: paste the valid titles and optionally pick a season rule (refused if a season is already running) |
 | `/season-rule rule` | host | Set or change the season's rule mid-season (applies to weeks scored from then on) |
 | `/add-anime` `/remove-anime` | host | Adjust the title list mid-season |
-| `/event-template template [type] [note]` | host | Open a week with a saved scoring template |
-| `/new-event exact_points partial_points [type] [note] [save_as]` | host | Open a week with custom scoring |
+| `/event-template template [type] [note]` | host | Open a week with a saved scoring template (type: standard, special, or ups and downs) |
+| `/new-event exact_points partial_points [type] [note] [save_as]` | host | Open a week with custom scoring (same types) |
 | `/set-points exact_points partial_points [week]` | host | Change a ranked week's scoring (then `/end-week` to re-score) |
 | `/list-templates` | host | Show saved scoring templates |
 | `/lock` `/unlock` | host | Close or reopen picks (posts a notice in announcements) |
@@ -97,6 +97,25 @@ Summer 2026 sheet:
 |---|---|---|
 | Standard | 2 | 1 |
 | First Week Advantage | 5 | 2 |
+
+### Ups and Downs weeks
+
+An event type for a one-off week: open it with `/event-template` or `/new-event` and `type: ups and downs`. Members make
+their normal ranked picks **and** guess how many titles will climb (`ups`) and how many will fall (`downs`) compared
+with the previous week's chart: `/pick rank-1: Title ... ups: 3 downs: 4`. Each guess is worth 5 points when exact, 4 if
+off by 1, 3 if off by 2, and so on down to 0, separately for ups and for downs. The ranked picks score as usual (the
+template's points, plus the season rule if one is set) and the Ups and Downs points are added on top.
+
+- **What counts:** a title is an *up* if it sits at a better rank than on last week's chart and a *down* if it sits at a
+  worse one; it has to be on both charts. New entries and titles that dropped off don't count (two switches at the top of
+  the Ups and Downs section in `scoring.py` change that, and the announcement text follows them).
+- **Last week must be scored first.** The week it compares with is the event right before it. Starting the event, and
+  `/end-week`, both refuse until that week has results, and the announcement shows that chart for reference.
+- **`/pick`:** Discord can't hide options, so `ups` and `downs` are always listed (0-10, optional). In an ordinary week
+  they're refused; in this week both are needed the first time, and after that a member can change either on its own.
+  Together they can't exceed 10. They aren't carried over to other weeks.
+- The results post lists which titles went up, down, stayed, are new or dropped off, and `/my-score` shows each guess
+  against the actual count.
 
 ### Season rules
 
@@ -185,6 +204,29 @@ python bot.py
    because a wiped disk restores from the backup channel on the next start.
 4. Run exactly one instance, and stop any copy on your own machine first. Two instances would each keep their own
    database and both post backups.
+
+## Adding to the bot later
+
+**A new field on `/pick`** (for example a "hot take" title in a special week):
+1. Declare it as a `PickField` in `event_types.py` and list it in `fields=` of the event type(s) that use it. A field has
+   a name, a label, a one-line help text and a kind: a whole `int` (with min and max), a season `title`, one of a fixed
+   list of `choice`s, or free `text`. It can be required (needed the first time a member picks in that event) or optional.
+2. Add a parameter with the same name to `/pick` in `cogs/user.py`, with a matching type (`app_commands.Range[int, lo, hi]`
+   for a number, `str` for the rest). Discord needs every option written into the command, so this one line can't be
+   skipped; its description, title suggestions and fixed choices come from the declaration.
+
+Everything else is automatic: checking what the member typed (the whole `/pick` is refused if anything is wrong), keeping
+a value when they edit something else, saving it, showing it on their post and in the bare-`/pick` guide, and refusing it
+in weeks that don't use it. The values live in one generic table (`pick_extras`), so a new field never needs a database
+change, and older backups still restore. `tests/test_pick_fields.py` fails if the declarations and `/pick` disagree.
+Discord allows 25 options on a command; `/pick` has the ten ranks plus the extra fields.
+
+**A new event type** (an `EventType` in `event_types.py`): its name, its fields, and optional hooks for a rule across
+fields (`check`), reasons it can't start or be scored yet (`start_problem`, `score_problem`), extra announcement text
+(`announce`) and extra points plus a results-post section (`score`). It then shows up in `/event-template` and
+`/new-event` by itself. `tests/test_pick_fields.py` has a made-up "Bonus Round" event doing all of this as a template.
+
+**A new season rule** goes in `season_rules.py` (see Season rules above).
 
 ## Limits worth knowing
 

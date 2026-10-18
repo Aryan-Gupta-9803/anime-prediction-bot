@@ -57,6 +57,9 @@ CREATE TABLE IF NOT EXISTS results (
 CREATE TABLE IF NOT EXISTS scores (
     week_id TEXT NOT NULL, user_id TEXT NOT NULL, username TEXT NOT NULL, points INTEGER NOT NULL,
     breakdown_json TEXT NOT NULL, computed_at TEXT NOT NULL, PRIMARY KEY (week_id, user_id));
+CREATE TABLE IF NOT EXISTS pick_extras (
+    week_id TEXT NOT NULL, user_id TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL,
+    PRIMARY KEY (week_id, user_id, key));
 CREATE TABLE IF NOT EXISTS ballot_categories (
     week_id TEXT NOT NULL, ord INTEGER NOT NULL, category TEXT NOT NULL, points INTEGER NOT NULL,
     correct_answer TEXT NOT NULL DEFAULT '', PRIMARY KEY (week_id, ord));
@@ -68,18 +71,20 @@ CREATE TABLE IF NOT EXISTS ballot_submissions (
     submitted_at TEXT NOT NULL, PRIMARY KEY (week_id, user_id));
 """
 
+# What a backup file must contain to be usable. Tables added later (pick_extras) are deliberately NOT listed:
+# an older backup doesn't have them, and restoring one creates them empty (see restore_snapshot/_init_schema).
 EXPECTED_TABLES = {
     "meta", "config", "anime", "weeks", "point_rules", "templates", "predictions", "results", "scores",
     "ballot_categories", "ballot_picks", "ballot_submissions",
 }
 # Tables wiped by /reset. Config (channels) and templates survive.
 SEASON_TABLES = [
-    "anime", "weeks", "point_rules", "predictions", "results", "scores",
+    "anime", "weeks", "point_rules", "predictions", "pick_extras", "results", "scores",
     "ballot_categories", "ballot_picks", "ballot_submissions",
 ]
 # What /export writes, in sheet order.
 EXPORT_TABLES = [
-    "weeks", "predictions", "results", "scores", "anime", "point_rules", "templates",
+    "weeks", "predictions", "pick_extras", "results", "scores", "anime", "point_rules", "templates",
     "ballot_categories", "ballot_picks", "ballot_submissions",
 ]
 
@@ -381,7 +386,9 @@ def get_prediction(week_id: str, user_id: str):
     return _one("SELECT * FROM predictions WHERE week_id = ? AND user_id = ?", (week_id, str(user_id)))
 
 
-def upsert_prediction(week_id: str, user_id: str, username: str, ranks: list, message_id):
+def upsert_prediction(week_id: str, user_id: str, username: str, ranks: list, message_id, extras=None):
+    """Saves a member's ten ranks for the week (and remembers them as their last picks). `extras` is {key: value}
+    for the event's extra pick fields (see pick_fields.py), saved in the same transaction."""
     ranks = (list(ranks) + [""] * 10)[:10]
     columns = ", ".join(RANK_COLS)
     marks = ", ".join("?" for _ in RANK_COLS)
@@ -400,6 +407,33 @@ def upsert_prediction(week_id: str, user_id: str, username: str, ranks: list, me
             f"ON CONFLICT(user_id) DO UPDATE SET week_id = excluded.week_id, {updates}, saved_at = excluded.saved_at",
             (str(user_id), week_id, *ranks, stamp),
         )
+        for key, value in (extras or {}).items():
+            conn.execute(
+                "INSERT INTO pick_extras(week_id, user_id, key, value) VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(week_id, user_id, key) DO UPDATE SET value = excluded.value",
+                (week_id, str(user_id), key, str(value)),
+            )
+
+
+def get_pick_extras(week_id: str, user_id: str) -> dict:
+    """{key: text} of the extra pick fields a member saved for the week."""
+    return {r["key"]: r["value"] for r in _q(
+        "SELECT key, value FROM pick_extras WHERE week_id = ? AND user_id = ?", (week_id, str(user_id)))}
+
+
+def list_pick_extras(week_id: str) -> dict:
+    """{user_id: {key: text}} for the week."""
+    result = {}
+    for r in _q("SELECT user_id, key, value FROM pick_extras WHERE week_id = ?", (week_id,)):
+        result.setdefault(r["user_id"], {})[r["key"]] = r["value"]
+    return result
+
+
+def previous_week(week_id: str):
+    """The event that came right before `week_id`, or None if it was the first."""
+    weeks = list_weeks()
+    ids = [w["week_id"] for w in weeks]
+    return weeks[ids.index(week_id) - 1] if week_id in ids and ids.index(week_id) > 0 else None
 
 
 def get_last_picks(user_id: str):

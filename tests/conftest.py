@@ -57,13 +57,14 @@ class Env:
     def inter(self, user, command=None):
         return FakeInteraction(self.client, self.guild, user, command)
 
-    async def pick(self, user, ranks):
+    async def pick(self, user, ranks, ups=None, downs=None):
         """/pick with all ten rank fields: a title for each, and (leave empty) for an empty entry, so it
-        replaces the member's picks the way filling in a whole form would. Returns the interaction."""
+        replaces the member's picks the way filling in a whole form would. `ups`/`downs` are for Ups and
+        Downs weeks. Returns the interaction."""
         from validation import CLEAR
         values = ((list(ranks) + [""] * 10)[:10])
         i = self.inter(user)
-        await self.user_cog.pick.callback(self.user_cog, i, *[v or CLEAR for v in values])
+        await self.user_cog.pick.callback(self.user_cog, i, *[v or CLEAR for v in values], ups, downs)
         return i
 
     async def submit(self, inter, text):

@@ -19,35 +19,55 @@ from common import (
     send_paged,
     week_autocomplete,
 )
+import event_types
 import season_rules
 import style
 from forms import RankedForm
 from permissions import is_admin
 from style import pts, row
-from textutil import chunk_lines
+from textutil import chunk_lines, num
 from validation import merge_rank_edits
 
 WEEK_TYPE_CHOICES = [
-    app_commands.Choice(name="standard", value="standard"),
-    app_commands.Choice(name="special", value="special"),
+    app_commands.Choice(name=e.choice, value=e.key) for e in event_types.EVENT_TYPES.values() if e.choice
 ]
 
 
 # ---- scoring (blocking; always run via asyncio.to_thread) -------------------------------------------
 
 def _score_week(week_id: str, actual: list):
-    """Scores every prediction under the season's rule. Returns (how many were scored, notes for the
-    results post such as the minority multipliers)."""
+    """Scores every prediction under the season's rule, plus whatever the event type adds on top (the ups and downs
+    guesses, say). Returns (how many were scored, notes for the results post such as the minority multipliers,
+    extra sections [(heading, lines)] for the results post)."""
     rules = storage.get_rules(week_id)
     rule = season_rules.get_rule(storage.get_season_rule())
     predictions = storage.list_predictions(week_id)
     results, notes = rule.score([storage.prediction_ranks(p) for p in predictions], actual, rules)
+    extra = []
+
+    week = storage.get_week(week_id)
+    event = event_types.get(week["type"]) if week else None
+    if event is not None and event.score is not None:
+        bonuses, extra = event.score(week_id, predictions, actual)
+        results = [
+            (num(total + bonus), breakdown + rows)
+            for (total, breakdown), (bonus, rows) in zip(results, bonuses)
+        ]
+
     entries = [
         {"user_id": p["user_id"], "username": p["username"], "points": total, "breakdown": breakdown}
         for p, (total, breakdown) in zip(predictions, results)
     ]
     storage.replace_scores(week_id, entries)
-    return len(entries), notes
+    return len(entries), notes, extra
+
+
+async def _score_problem(week) -> str:
+    """Why this event can't be scored yet (for example last week's chart is missing), or '' if it can."""
+    event = event_types.get(week["type"])
+    if event.score_problem is None:
+        return ""
+    return await asyncio.to_thread(event.score_problem, week["week_id"])
 
 
 # ---- announcements -------------------------------------------------------------------------------------
@@ -60,7 +80,7 @@ def _leaderboard_lines(totals: dict, names: dict, limit: int = 15) -> list:
     return lines
 
 
-async def _post_results(client: discord.Client, week_id: str, notes: list = ()) -> bool:
+async def _post_results(client: discord.Client, week_id: str, notes: list = (), extra: list = ()) -> bool:
     """Posts the week's results and standings to the announcement channel."""
     channel = await get_text_channel(client, "announcement_channel_id")
     if channel is None:
@@ -70,7 +90,7 @@ async def _post_results(client: discord.Client, week_id: str, notes: list = ()) 
     scores = await storage.aio.list_scores(week_id)
     totals, names = season_totals(scores)
     board = _leaderboard_lines(totals, names) or ["Nobody submitted a prediction for this one."]
-    title = f"Results are in: {style.week_label(week_id)}" + (f" ({week['type']})" if week else "")
+    title = f"Results are in: {style.week_label(week_id)}" + (f" ({event_types.type_label(week['type'])})" if week else "")
     greeting = f"Hello everyone! The **{style.week_label(week_id)}** results are in!"
 
     actual = await storage.aio.get_results(week_id) or []
@@ -79,6 +99,7 @@ async def _post_results(client: discord.Client, week_id: str, notes: list = ()) 
     if notes:
         rule = season_rules.get_rule(await storage.aio.get_season_rule())
         sections.append((rule.name, [row(f"**{esc(label)}**", text) for label, text in notes]))
+    sections.extend(extra)
     await channel.send(content=greeting, embed=style.embed(title, *sections, ("Leaderboard", board)))
 
     all_scores = await storage.aio.list_scores()
@@ -102,11 +123,17 @@ async def _finish_results(
         )
         return
 
+    week = await storage.aio.get_week(week_id)
+    problem = await _score_problem(week) if week else ""
+    if problem:
+        await reply(interaction, problem + " Nothing was saved.")
+        return
+
     await acknowledge(interaction, "Scoring...", from_command)
     await storage.aio.save_result(week_id, actual)
     await storage.aio.set_week_locked(week_id, True)
-    scored, notes = await asyncio.to_thread(_score_week, week_id, actual)
-    posted = await _post_results(interaction.client, week_id, notes)
+    scored, notes, extra = await asyncio.to_thread(_score_week, week_id, actual)
+    posted = await _post_results(interaction.client, week_id, notes, extra)
     backup_problem = await backup.try_backup(interaction.client, f"{week_id} scored")
 
     lines = [f"Results saved and **{scored}** prediction(s) scored for {style.week_label(week_id)}.{summary}"]
@@ -202,6 +229,13 @@ class Weeks(commands.Cog):
         ok, reminder = await self._guard_new_event(interaction, needs_anime=True)
         if not ok:
             return
+
+        event = event_types.get(week_type)
+        if event.start_problem is not None:
+            problem = await asyncio.to_thread(event.start_problem)
+            if problem:
+                await reply(interaction, problem)
+                return
         await interaction.response.defer(ephemeral=True)
 
         replaced = None
@@ -215,7 +249,7 @@ class Weeks(commands.Cog):
         channel = await get_text_channel(interaction.client, "announcement_channel_id")
         if channel is not None:
             lines = [
-                row("Type", week_type),
+                row("Type", event.name),
                 row("Scoring", f"{pts(exact_points)} for an exact spot, {pts(partial_points)} if it's on the chart elsewhere"),
             ]
             rule = season_rules.get_rule(await storage.aio.get_season_rule())
@@ -223,16 +257,19 @@ class Weeks(commands.Cog):
                 lines.append(row("Season rule", rule.name))
             label = style.week_label(week_id)
             greeting = f"Hello everyone! **{label}** predictions are open!"
+            how = "Use /pick to submit your ranked top 10, with titles from /anime-list."
+            sections = [(how, lines)]
+            if event.announce is not None:
+                how_override, more_lines, more_sections = await asyncio.to_thread(event.announce, week_id)
+                sections[0] = (how_override or how, lines + more_lines)
+                sections.extend(more_sections)
             await channel.send(
                 content=f"{greeting}\n{esc(note)}" if note else greeting,      # the note sits above the embed
-                embed=style.embed(
-                    f"{label} predictions are open",
-                    ("Use /pick to submit your ranked top 10, with titles from /anime-list.", lines),
-                ),
+                embed=style.embed(f"{label} predictions are open", *sections),
                 allowed_mentions=discord.AllowedMentions.none(),                # a host's note never pings anyone
             )
 
-        text = f"Started **{style.week_label(week_id)}** ({week_type}): {exact_points} pts exact / {partial_points} pts wrong spot."
+        text = f"Started **{style.week_label(week_id)}** ({event.name}): {exact_points} pts exact / {partial_points} pts wrong spot."
         if save_as:
             text += f" Template **{save_as.strip()}** {'updated' if replaced else 'saved'}."
         if channel is None:
@@ -243,7 +280,7 @@ class Weeks(commands.Cog):
     @is_admin()
     @app_commands.describe(
         template="Saved scoring template to use",
-        week_type="standard or special",
+        week_type="standard, special, or ups and downs (also guess how many titles climb and fall)",
         note="Shown in the announcement, e.g. a suggested deadline (the bot never closes picks by itself)",
     )
     @app_commands.choices(week_type=WEEK_TYPE_CHOICES)
@@ -420,6 +457,10 @@ class Weeks(commands.Cog):
                 interaction,
                 f"The scoring rules for {style.week_label(week_id)} are incomplete. Set them with `/set-points` first.",
             )
+            return
+        problem = await _score_problem(wk)
+        if problem:
+            await reply(interaction, problem)
             return
         existing = await storage.aio.get_results(week_id) or []
         reject_prefix = (

@@ -3,6 +3,8 @@ import logging
 import discord
 from discord import app_commands
 
+import event_types
+import pick_fields
 import storage
 import style
 from textutil import num
@@ -97,7 +99,7 @@ async def week_autocomplete(interaction: discord.Interaction, current: str):
         w for w in await storage.aio.list_weeks()
         if needle in str(w["week_id"]).lower() or needle in style.week_label(w["week_id"]).lower()
     ]
-    return [app_commands.Choice(name=f"{style.week_label(w['week_id'])} ({w['type']})", value=w["week_id"]) for w in weeks][-25:]
+    return [app_commands.Choice(name=f"{style.week_label(w['week_id'])} ({event_types.type_label(w['type'])})", value=w["week_id"]) for w in weeks][-25:]
 
 
 async def title_autocomplete(interaction: discord.Interaction, current: str):
@@ -124,6 +126,28 @@ def rank_options(blurb: str):
         return app_commands.autocomplete(**{n: title_autocomplete for n in names})(func)
 
     return decorate
+
+
+def pick_field_options(func):
+    """Gives every extra /pick field (see pick_fields.py) its description and, for title and choice fields, its
+    suggestions or fixed choices, straight from the field declarations. The command still needs a parameter named
+    like the field; tests/test_pick_fields.py checks that."""
+    fields = event_types.all_fields()
+    if not fields:
+        return func
+    func = app_commands.describe(**{
+        key: pick_fields.describe(field, event_types.event_names_using(field)) for key, field in fields.items()
+    })(func)
+    titles = {key: title_autocomplete for key, field in fields.items() if field.kind == "title"}
+    if titles:
+        func = app_commands.autocomplete(**titles)(func)
+    choices = {
+        key: [app_commands.Choice(name=c, value=c) for c in field.choices]
+        for key, field in fields.items() if field.kind == "choice"
+    }
+    if choices:
+        func = app_commands.choices(**choices)(func)
+    return func
 
 
 def given_ranks(*values) -> dict:

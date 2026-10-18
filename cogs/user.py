@@ -5,9 +5,12 @@ from discord import app_commands
 from discord.ext import commands
 from discord.utils import escape_markdown as esc
 
+import event_types
+import pick_fields
 import storage
 from common import (
     get_text_channel,
+    pick_field_options,
     given_ranks,
     post_or_edit_embed,
     rank_options,
@@ -71,9 +74,13 @@ async def _publish(interaction, channel, existing_message_id, embed, save):
     return message_id
 
 
-async def _finish_picks(interaction: discord.Interaction, week_id: str, canonical: list, summary: str = ""):
+async def _finish_picks(
+    interaction: discord.Interaction, week_id: str, canonical: list, summary: str = "", extras: dict = None,
+    event=None,
+):
     """Saves a validated ten-slot pick (empty slots allowed) and posts/updates the member's embed.
-    `summary` is extra text for the private reply: what the edit changed."""
+    `summary` is extra text for the private reply: what the edit changed. `extras` is {key: value} for the event's
+    extra pick fields; `event` is the week's EventType (needed to show them)."""
     if await _open_week_or_explain(interaction, week_id) is None:
         return
     channel = await _picks_channel_or_explain(interaction)
@@ -83,15 +90,20 @@ async def _finish_picks(interaction: discord.Interaction, week_id: str, canonica
     await interaction.response.defer(ephemeral=True)
     user_id = str(interaction.user.id)
     existing = await storage.aio.get_prediction(week_id, user_id)
+    sections = [(style.week_label(week_id), [row(i, esc(t) if t else "-") for i, t in enumerate(canonical, start=1)])]
+    if extras and event is not None and event.fields:
+        sections.append((event.name, [row(f.label, esc(str(extras[f.key]))) for f in event.fields if f.key in extras]))
     embed = style.embed(
         f"{esc(interaction.user.display_name)}'s picks",
-        (style.week_label(week_id), [row(i, esc(t) if t else "-") for i, t in enumerate(canonical, start=1)]),
+        *sections,
         footer="Change them any time before the lock with /pick · Last edited",
         timestamp=True,
     )
 
     async def save(message_id):
-        await storage.aio.upsert_prediction(week_id, user_id, str(interaction.user), canonical, message_id)
+        await storage.aio.upsert_prediction(
+            week_id, user_id, str(interaction.user), canonical, message_id, extras=pick_fields.to_stored(extras or {})
+        )
 
     message_id = await _publish(interaction, channel, existing["message_id"] if existing else None, embed, save)
     if message_id is not None:
@@ -131,23 +143,26 @@ def _breakdown_lines(raw: str) -> list:
     return lines
 
 
-def _how_to_pick(week_id: str, ranks: list, note: str) -> discord.Embed:
+def _how_to_pick(week_id: str, ranks: list, note: str, event=None, extras: dict = None) -> discord.Embed:
     """What a bare /pick shows: the member's current picks and how the rank fields work."""
     label = style.week_label(week_id) + (f" ({note})" if note else "")
     shown = [row(i, esc(t) if t else "-") for i, t in enumerate(ranks, start=1)] if any(ranks) else ["You haven't picked yet."]
-    return style.embed(
-        "Make your picks",
-        (f"Your picks: {label}", shown),
-        (
-            "How it works",
-            [
-                "Run `/pick` and fill in the `rank-` fields: `rank-1` is the title you think will be #1 (top of the chart), "
-                "down to `rank-10`. Click a field and start typing to see matching titles.",
-                "A rank you leave out keeps its current pick, so you can change just one: `/pick rank-3: Bleach`. "
-                "Choose `(leave empty)` to empty a rank.",
-            ],
-        ),
-    )
+    how = [
+        "Run `/pick` and fill in the `rank-` fields: `rank-1` is the title you think will be #1 (top of the chart), "
+        "down to `rank-10`. Click a field and start typing to see matching titles.",
+        "A rank you leave out keeps its current pick, so you can change just one: `/pick rank-3: Bleach`. "
+        "Choose `(leave empty)` to empty a rank.",
+    ]
+    sections = [(f"Your picks: {label}", shown)]
+    if event is not None and event.fields:
+        have = extras or {}
+        sections.append((
+            f"Your {event.name} picks",
+            [row(f.label, esc(str(have[f.key])) if f.key in have else "-") for f in event.fields],
+        ))
+        if event.pick_help:
+            how.append(event.pick_help)
+    return style.embed("Make your picks", *sections, ("How it works", how))
 
 
 class UserCommands(commands.Cog):
@@ -155,6 +170,7 @@ class UserCommands(commands.Cog):
         self.bot = bot
 
     @app_commands.command(name="pick", description="Submit or change your picks: fill in the rank-1 to rank-10 fields")
+    @pick_field_options
     @rank_options("Your pick for rank")
     async def pick(
         self,
@@ -169,8 +185,13 @@ class UserCommands(commands.Cog):
         rank_8: str = "",
         rank_9: str = "",
         rank_10: str = "",
+        # Extra fields for special events. Each needs a PickField declared in event_types.py (its description,
+        # suggestions and choices come from there); tests/test_pick_fields.py checks the two lists match.
+        ups: app_commands.Range[int, 0, 10] = None,
+        downs: app_commands.Range[int, 0, 10] = None,
     ):
         """Fill in the rank fields to submit or change picks; ranks left out keep their current pick."""
+        given_extras = pick_fields.collect(locals(), event_types.all_fields())
         week = await storage.aio.get_current_week()
         if week is None:
             await reply(interaction, "No event is open right now.")
@@ -186,20 +207,26 @@ class UserCommands(commands.Cog):
             return
 
         week_id = week["week_id"]
+        event = event_types.get(week["type"])
         titles = await storage.aio.get_anime_list()
         ranks, note = await _prefill_ranks(week_id, user_id, titles)
+        current_extras = pick_fields.typed(event.fields, await storage.aio.get_pick_extras(week_id, user_id))
 
-        if not given:
-            await reply(interaction, embed=_how_to_pick(week_id, ranks, note))
+        if not given and not given_extras:
+            await reply(interaction, embed=_how_to_pick(week_id, ranks, note, event, current_extras))
             return
 
         errors, canonical, notes = merge_rank_edits(ranks, given, titles)
         if not errors and not any(canonical):
             errors.append("Every rank would be empty. Fill in at least one.")
+        extra_errors, extras = pick_fields.resolve(event, given_extras, current_extras, titles)
+        errors.extend(extra_errors)
         if errors:
             await reply(interaction, REJECTED + "\n" + "\n".join(f"- {e}" for e in errors))
             return
+
         changed = [f"#{pos} {'emptied' if not canonical[pos - 1] else esc(canonical[pos - 1])}" for pos in sorted(given)]
+        changed += [f"{key} {esc(str(extras[key]))}" for key in given_extras]
         kept = sum(1 for pos in range(1, 11) if pos not in given and canonical[pos - 1])
         where = f" ({note})" if note else ""
         summary = "\nChanged: " + ", ".join(changed) + "."
@@ -207,7 +234,11 @@ class UserCommands(commands.Cog):
             summary += f" Kept {kept} other rank(s) from your {'current picks' if not note else 'last picks'}{where}."
         if notes:
             summary += "\n" + "\n".join(notes)
-        await _finish_picks(interaction, week_id, canonical, summary)
+        if extras:
+            summary += f"\nYour {event.name} picks: " + ", ".join(
+                f"{f.label} {esc(str(extras[f.key]))}" for f in event.fields if f.key in extras
+            ) + "."
+        await _finish_picks(interaction, week_id, canonical, summary, extras, event)
 
     @app_commands.command(name="my-score", description="See how you scored (only you can see this)")
     @app_commands.describe(week="Leave empty for the active event")
