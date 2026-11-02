@@ -23,6 +23,7 @@ import pytest
 import backup
 import storage
 from cogs.backups import Backups
+from cogs.heartbeat import Heartbeat
 from cogs.help import Help
 from cogs.season import Season
 from cogs.user import UserCommands
@@ -53,6 +54,9 @@ class Env:
         )
         self.admin = FakeUser("host", manage_guild=True)
         self.alice, self.bob, self.carol = FakeUser("alice"), FakeUser("bob"), FakeUser("carol")
+        self.heartbeat = Heartbeat(self.client)               # the check-in DMs go to the bot's owner, who is the host here
+        self.client.cogs["Heartbeat"] = self.heartbeat
+        self.client.owner = self.admin
 
     def inter(self, user, command=None):
         return FakeInteraction(self.client, self.guild, user, command)

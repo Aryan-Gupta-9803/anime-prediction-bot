@@ -298,9 +298,18 @@ def next_week_id() -> str:
     return f"week-{n}"
 
 
-def create_week(week_id: str, week_type: str, note: str, exact_points: int, partial_points: int):
-    """Point values are flat across all 10 positions, matching how every week in the
-    reference sheet scores."""
+def _rule_rows(week_id: str, exact_points: int, partial_points: int, multipliers=None) -> list:
+    """One point_rules row per position. Flat across all 10 positions, matching how every week in the reference sheet
+    scores, except positions listed in `multipliers` ({position: factor}), whose points are multiplied."""
+    factors = multipliers or {}
+    return [
+        (week_id, pos, exact_points * factors.get(pos, 1), partial_points * factors.get(pos, 1))
+        for pos in range(1, 11)
+    ]
+
+
+def create_week(week_id: str, week_type: str, note: str, exact_points: int, partial_points: int, multipliers=None):
+    """Opens a week and sets its scoring (flat, or with some positions multiplied: see _rule_rows)."""
     with _tx() as conn:
         conn.execute(
             "INSERT INTO weeks(week_id, type, note, locked, created_at) VALUES (?, ?, ?, 0, ?)",
@@ -308,7 +317,7 @@ def create_week(week_id: str, week_type: str, note: str, exact_points: int, part
         )
         conn.executemany(
             "INSERT INTO point_rules(week_id, position, exact_points, partial_points) VALUES (?, ?, ?, ?)",
-            [(week_id, pos, exact_points, partial_points) for pos in range(1, 11)],
+            _rule_rows(week_id, exact_points, partial_points, multipliers),
         )
         _set_config(conn, "current_week_id", week_id)
 
@@ -331,7 +340,7 @@ def rules_complete(rules: dict) -> bool:
     return all(pos in rules for pos in range(1, 11))
 
 
-def set_week_points(week_id: str, exact_points: int, partial_points: int):
+def set_week_points(week_id: str, exact_points: int, partial_points: int, multipliers=None):
     """Replaces the scoring rules of a ranked week (re-run /end-week afterwards to re-score)."""
     with _tx() as conn:
         if conn.execute("SELECT 1 FROM weeks WHERE week_id = ?", (week_id,)).fetchone() is None:
@@ -339,7 +348,7 @@ def set_week_points(week_id: str, exact_points: int, partial_points: int):
         conn.execute("DELETE FROM point_rules WHERE week_id = ?", (week_id,))
         conn.executemany(
             "INSERT INTO point_rules(week_id, position, exact_points, partial_points) VALUES (?, ?, ?, ?)",
-            [(week_id, pos, exact_points, partial_points) for pos in range(1, 11)],
+            _rule_rows(week_id, exact_points, partial_points, multipliers),
         )
 
 

@@ -168,6 +168,7 @@ class Help(commands.Cog):
             await channel_status("announcement_channel_id", "Announcements", REQUIRED_ANNOUNCE_PERMS),
             await channel_status("user_channel_id", "Picks", REQUIRED_PICKS_PERMS),
             await _backup_status(interaction.client, me),
+            *([heartbeat.status_line()] if (heartbeat := interaction.client.get_cog("Heartbeat")) is not None else []),
             f"[ok] Anime list: {len(anime)} titles" if anime else "[todo] Anime list is empty. Run `/start`.",
             f"[ok] Season rule: {rule.name}" if anime else "[todo] Season rule: choose one with `/start`.",
             f"[ok] Scoring templates: {len(templates)}" if templates else "[todo] No scoring templates (use `/new-event`).",
@@ -204,7 +205,8 @@ class Help(commands.Cog):
             value=(
                 "1. Open it: `/event-template` (saved points, e.g. Standard 2/1) or `/new-event` (custom points; "
                 "`save_as` keeps them as a template). Pick `week_type: ups and downs` for the Ups and Downs event "
-                "(last week must be scored first).\n"
+                "(last week must be scored first) or `gear 5` for the week where rank 5 pays 5x. "
+                "`rank_multipliers` (e.g. `5:5, 1:2`) makes any ranks pay more.\n"
                 "2. Members use `/pick`; their picks appear in the picks channel.\n"
                 "3. `/lock` when you're ready. Nothing closes automatically.\n"
                 "4. `/end-week` enter the real top 10 in a two-step form (1-5, then 6-10), or fix single ranks with the `rank-` fields "

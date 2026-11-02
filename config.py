@@ -31,6 +31,13 @@ DATA_DIR = os.environ.get("DATA_DIR", "data")
 os.environ["DATA_DIR"] = DATA_DIR
 ADMIN_ROLE_NAME = os.environ.get("ADMIN_ROLE_NAME", "").strip() or "Event Host"   # a blank value means the default
 
+# Who gets the bot's check-in DMs (see cogs/heartbeat.py). Blank means whoever owns the bot's Discord application.
+_alert_user = (os.environ.get("ALERT_USER_ID") or "").strip()
+if _alert_user and not _alert_user.isdigit():
+    sys.exit("ALERT_USER_ID must be your numeric Discord user ID (Developer Mode, right-click yourself, Copy User ID).")
+ALERT_USER_ID = int(_alert_user) if _alert_user else None
+HEARTBEAT_DM = (os.environ.get("HEARTBEAT_DM") or "on").strip().lower() not in ("off", "no", "false", "0")
+
 try:
     BACKUP_KEEP = max(5, int(os.environ.get("BACKUP_KEEP", "50")))
 except ValueError:

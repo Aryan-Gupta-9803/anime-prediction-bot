@@ -26,7 +26,7 @@ from forms import RankedForm
 from permissions import is_admin
 from style import pts, row
 from textutil import chunk_lines, num
-from validation import merge_rank_edits
+from validation import merge_rank_edits, parse_rank_multipliers
 
 WEEK_TYPE_CHOICES = [
     app_commands.Choice(name=e.choice, value=e.key) for e in event_types.EVENT_TYPES.values() if e.choice
@@ -147,6 +147,25 @@ async def _finish_results(
     await reply(interaction, "\n".join(lines))
 
 
+# ---- points by rank ---------------------------------------------------------------------------------------
+
+RANK_MULTIPLIER_HELP = "Points by rank: 5:5 makes rank 5 pay 5x, 5:5, 1:2 sets two ranks (optional)"
+
+
+def _rank_multipliers(event, raw: str):
+    """The multipliers for a new/changed week: the event type's own (Gear 5's rank 5), overridden by what the host
+    typed. Returns ({rank: factor}, errors)."""
+    typed, errors = parse_rank_multipliers(raw)
+    return {**dict(event.position_multipliers), **typed}, errors
+
+
+def _multiplier_text(multipliers: dict, exact: int, partial: int) -> str:
+    return "; ".join(
+        f"rank {rank} pays {factor}x ({pts(exact * factor)} exact / {pts(partial * factor)} elsewhere on the chart)"
+        for rank, factor in sorted(multipliers.items())
+    )
+
+
 # ---- commands ---------------------------------------------------------------------------------------------
 
 async def _post_final_standings(client: discord.Client) -> bool:
@@ -225,12 +244,17 @@ class Weeks(commands.Cog):
         exact_points: int,
         partial_points: int,
         save_as: str = "",
+        rank_multipliers: str = "",
     ):
         ok, reminder = await self._guard_new_event(interaction, needs_anime=True)
         if not ok:
             return
 
         event = event_types.get(week_type)
+        multipliers, errors = _rank_multipliers(event, rank_multipliers)
+        if errors:
+            await reply(interaction, "Nothing was started:\n" + "\n".join(f"- {e}" for e in errors))
+            return
         if event.start_problem is not None:
             problem = await asyncio.to_thread(event.start_problem)
             if problem:
@@ -244,7 +268,9 @@ class Weeks(commands.Cog):
                 save_as.strip(), exact_points, partial_points, f"Saved from /new-event ({week_type})"
             )
         week_id = await storage.aio.next_week_id()
-        await storage.aio.create_week(week_id, week_type, note, exact_points, partial_points)
+        await storage.aio.create_week(
+            week_id, week_type, note, exact_points, partial_points, multipliers=multipliers
+        )
 
         channel = await get_text_channel(interaction.client, "announcement_channel_id")
         if channel is not None:
@@ -252,6 +278,8 @@ class Weeks(commands.Cog):
                 row("Type", event.name),
                 row("Scoring", f"{pts(exact_points)} for an exact spot, {pts(partial_points)} if it's on the chart elsewhere"),
             ]
+            if multipliers:
+                lines.append(row("Points by rank", _multiplier_text(multipliers, exact_points, partial_points)))
             rule = season_rules.get_rule(await storage.aio.get_season_rule())
             if not season_rules.is_standard(rule):
                 lines.append(row("Season rule", rule.name))
@@ -270,8 +298,11 @@ class Weeks(commands.Cog):
             )
 
         text = f"Started **{style.week_label(week_id)}** ({event.name}): {exact_points} pts exact / {partial_points} pts wrong spot."
+        if multipliers:
+            text += " " + _multiplier_text(multipliers, exact_points, partial_points) + "."
         if save_as:
-            text += f" Template **{save_as.strip()}** {'updated' if replaced else 'saved'}."
+            text += f" Template **{save_as.strip()}** {'updated' if replaced else 'saved'}"
+            text += " (only the two base numbers, not the rank multipliers)." if multipliers else "."
         if channel is None:
             text += "\nI couldn't post the announcement. Check `/setup` and my permissions."
         await reply(interaction, text + reminder)
@@ -280,8 +311,9 @@ class Weeks(commands.Cog):
     @is_admin()
     @app_commands.describe(
         template="Saved scoring template to use",
-        week_type="standard, special, or ups and downs (also guess how many titles climb and fall)",
+        week_type="standard, special, ups and downs (guess climbs and falls) or gear 5 (rank 5 pays 5x)",
         note="Shown in the announcement, e.g. a suggested deadline (the bot never closes picks by itself)",
+        rank_multipliers=RANK_MULTIPLIER_HELP,
     )
     @app_commands.choices(week_type=WEEK_TYPE_CHOICES)
     @app_commands.autocomplete(template=template_autocomplete)
@@ -291,6 +323,7 @@ class Weeks(commands.Cog):
         template: str,
         week_type: app_commands.Choice[str] = None,
         note: app_commands.Range[str, 0, 500] = "",
+        rank_multipliers: app_commands.Range[str, 0, 100] = "",
     ):
         tmpl = await storage.aio.get_template(template)
         if tmpl is None:
@@ -302,6 +335,7 @@ class Weeks(commands.Cog):
             note,
             tmpl["exact_points"],
             tmpl["partial_points"],
+            rank_multipliers=rank_multipliers,
         )
 
     @app_commands.command(name="new-event", description="Start a new week with custom scoring, optionally saved as a template")
@@ -309,9 +343,10 @@ class Weeks(commands.Cog):
     @app_commands.describe(
         exact_points="Points for an exact position match",
         partial_points="Points if the anime charts but in a different position",
-        week_type="standard or special",
+        week_type="standard, special, ups and downs (guess climbs and falls) or gear 5 (rank 5 pays 5x)",
         note="Shown in the announcement, e.g. a suggested deadline (the bot never closes picks by itself)",
         save_as="Also save these values as a reusable template with this name",
+        rank_multipliers=RANK_MULTIPLIER_HELP,
     )
     @app_commands.choices(week_type=WEEK_TYPE_CHOICES)
     async def new_event(
@@ -322,6 +357,7 @@ class Weeks(commands.Cog):
         week_type: app_commands.Choice[str] = None,
         note: app_commands.Range[str, 0, 500] = "",
         save_as: app_commands.Range[str, 0, 60] = "",
+        rank_multipliers: app_commands.Range[str, 0, 100] = "",
     ):
         await self._start_week(
             interaction,
@@ -330,6 +366,7 @@ class Weeks(commands.Cog):
             exact_points,
             partial_points,
             save_as,
+            rank_multipliers,
         )
 
     @app_commands.command(name="set-points", description="Change a ranked week's scoring (then re-run /end-week to re-score)")
@@ -338,6 +375,7 @@ class Weeks(commands.Cog):
         exact_points="Points for an exact position match",
         partial_points="Points if the anime charts but in a different position",
         week="Leave empty for the active event",
+        rank_multipliers=RANK_MULTIPLIER_HELP,
     )
     @app_commands.autocomplete(week=week_autocomplete)
     async def set_points(
@@ -346,14 +384,24 @@ class Weeks(commands.Cog):
         exact_points: app_commands.Range[int, -100, 1000],
         partial_points: app_commands.Range[int, -100, 1000],
         week: str = "",
+        rank_multipliers: app_commands.Range[str, 0, 100] = "",
     ):
         week_id = week or await storage.aio.get_current_week_id()
         wk = await storage.aio.get_week(week_id) if week_id else None
         if wk is None:
             await reply(interaction, "No such event. Pass a week id, or open one first.")
             return
-        await storage.aio.set_week_points(week_id, exact_points, partial_points)
+        multipliers, errors = _rank_multipliers(event_types.get(wk["type"]), rank_multipliers)
+        if errors:
+            await reply(interaction, "Nothing was changed:\n" + "\n".join(f"- {e}" for e in errors))
+            return
+        was_flat = len({v for v in (await storage.aio.get_rules(week_id)).values()}) <= 1
+        await storage.aio.set_week_points(week_id, exact_points, partial_points, multipliers=multipliers)
         text = f"**{style.week_label(week_id)}** now scores {exact_points} pts exact / {partial_points} pts wrong spot."
+        if multipliers:
+            text += " " + _multiplier_text(multipliers, exact_points, partial_points) + "."
+        elif not was_flat:
+            text += " Its rank multipliers were reset; pass `rank_multipliers` to set them again."
         if await storage.aio.week_has_results(wk):
             text += " Results are already in, so run `/end-week` to re-score everyone."
         await reply(interaction, text)

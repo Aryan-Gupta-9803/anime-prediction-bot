@@ -13,7 +13,7 @@ from config import DISCORD_TOKEN, GUILD_ID
 
 log = logging.getLogger("predictionbot")
 
-EXTENSIONS = ["cogs.season", "cogs.weeks", "cogs.user", "cogs.help", "cogs.backups"]
+EXTENSIONS = ["cogs.season", "cogs.weeks", "cogs.user", "cogs.help", "cogs.backups", "cogs.heartbeat"]
 
 
 class PredictionTree(app_commands.CommandTree):
@@ -84,8 +84,18 @@ class PredictionBot(commands.Bot):
             if guild.id != GUILD_ID:
                 log.warning("Also in %s, but commands there are refused (locked to GUILD_ID=%s).", guild.name, GUILD_ID)
 
+    async def _say_goodbye(self):
+        cog = self.get_cog("Heartbeat")
+        if cog is not None:
+            await cog.notify_shutdown()
+
     async def close(self):
-        # Last chance to get recent changes into the backup channel before the process ends.
+        # Tell the owner we're stopping (the closest a bot can get to "I'm down"), then get recent changes into the
+        # backup channel before the process ends.
+        try:
+            await self._say_goodbye()
+        except Exception as e:
+            log.warning("Goodbye DM skipped: %s", e)
         try:
             if await asyncio.to_thread(storage.is_dirty):
                 await asyncio.wait_for(backup.post_backup(self, "shutdown"), timeout=15)

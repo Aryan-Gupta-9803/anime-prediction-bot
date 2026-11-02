@@ -7,6 +7,7 @@ Every event ranks a top 10. An event type can add to that, and everything about 
   - score_problem:  why it can't be scored yet, if it can't
   - announce:       extra text for the "predictions are open" post
   - score:          extra points (and a section for the results post) on top of the ranked scoring
+  - position_multipliers: ranks that pay a multiple of the week's points (e.g. rank 5 pays 5x)
 Hooks are plain synchronous functions that may read storage; the bot runs them in a worker thread.
 
 To add an event type: write its hooks, add an EventType to EVENT_TYPES below, and it appears in /event-template and
@@ -36,6 +37,7 @@ class EventType:
     score_problem: Optional[Callable] = None    # (week_id) -> str, '' when it can be scored
     announce: Optional[Callable] = None         # (week_id) -> (how_text | None, [rows], [(heading, lines)])
     score: Optional[Callable] = None            # (week_id, predictions, actual) -> ([(points, rows)], [(heading, lines)])
+    position_multipliers: tuple = ()            # ((position, factor), ...): those ranks pay factor x the week's points
 
 
 # ---- Ups and Downs --------------------------------------------------------------------------------------------------
@@ -140,10 +142,28 @@ UPDOWN = EventType(
     score=_updown_score,
 )
 
+# ---- Gear 5 -----------------------------------------------------------------------------------------------------------
+
+GEAR_5_RANK, GEAR_5_FACTOR = 5, 5
+
+
+def _gear5_announce(week_id: str):
+    # The exact points are listed in the generic "Points by rank" row; this is the flavour.
+    return None, [row("Gear 5", f"Rank {GEAR_5_RANK} pays {GEAR_5_FACTOR}x this week. Choose it wisely!")], []
+
+
+GEAR_5 = EventType(
+    key="gear5",
+    name="Gear 5",
+    choice="gear 5",
+    announce=_gear5_announce,
+    position_multipliers=((GEAR_5_RANK, GEAR_5_FACTOR),),
+)
+
 STANDARD = EventType(key="standard", name="standard", choice="standard")
 SPECIAL = EventType(key="special", name="special", choice="special")
 
-EVENT_TYPES = {e.key: e for e in (STANDARD, SPECIAL, UPDOWN)}
+EVENT_TYPES = {e.key: e for e in (STANDARD, SPECIAL, UPDOWN, GEAR_5)}
 
 
 # ---- looking things up -----------------------------------------------------------------------------------------------

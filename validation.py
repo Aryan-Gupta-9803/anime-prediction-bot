@@ -53,6 +53,30 @@ def validate_slots(entries: list, valid_titles: list, first_pos: int = 1, noun: 
     return errors, canonical
 
 
+def parse_rank_multipliers(raw: str):
+    """Parses the host's points-by-rank text: '5:5' means rank 5 pays 5x, '5:5, 1:2' sets two ranks.
+    Returns ({rank: factor}, errors). Ranks are 1-10; a factor is a whole number from 0 to 100 (0 = worth nothing)."""
+    result, errors = {}, []
+    for part in re.split(r"[,;\n]+", raw or ""):
+        part = part.strip()
+        if not part:
+            continue
+        found = re.fullmatch(r"(?:rank\s*)?(\d{1,2})\s*[:=]\s*(\d{1,3})\s*[x\u00d7]?", part, re.IGNORECASE)
+        if not found:
+            errors.append(f"'{part}' should look like 5:5 (rank 5 pays 5x).")
+            continue
+        rank, factor = int(found.group(1)), int(found.group(2))
+        if not 1 <= rank <= 10:
+            errors.append(f"'{part}': the rank must be from 1 to 10.")
+        elif factor > 100:
+            errors.append(f"'{part}': the multiplier must be from 0 to 100.")
+        elif rank in result:
+            errors.append(f"Rank {rank} is listed more than once.")
+        else:
+            result[rank] = factor
+    return result, errors
+
+
 CLEAR = "(leave empty)"
 
 

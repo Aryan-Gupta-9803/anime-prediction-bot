@@ -41,9 +41,9 @@ setup checklist (including backup status), the lifecycle, a command list and how
 | `/start [rule]` | host | New season: paste the valid titles and optionally pick a season rule (refused if a season is already running) |
 | `/season-rule rule` | host | Set or change the season's rule mid-season (applies to weeks scored from then on) |
 | `/add-anime` `/remove-anime` | host | Adjust the title list mid-season |
-| `/event-template template [type] [note]` | host | Open a week with a saved scoring template (type: standard, special, or ups and downs) |
-| `/new-event exact_points partial_points [type] [note] [save_as]` | host | Open a week with custom scoring (same types) |
-| `/set-points exact_points partial_points [week]` | host | Change a ranked week's scoring (then `/end-week` to re-score) |
+| `/event-template template [type] [note] [rank_multipliers]` | host | Open a week with a saved scoring template (type: standard, special, ups and downs, or gear 5) |
+| `/new-event exact_points partial_points [type] [note] [save_as] [rank_multipliers]` | host | Open a week with custom scoring (same types) |
+| `/set-points exact_points partial_points [week] [rank_multipliers]` | host | Change a ranked week's scoring (then `/end-week` to re-score) |
 | `/list-templates` | host | Show saved scoring templates |
 | `/lock` `/unlock` | host | Close or reopen picks (posts a notice in announcements) |
 | `/end-week [week]` | host | Enter the real chart (ten-box form or rank fields), score everyone, post results, back up |
@@ -97,6 +97,20 @@ Summer 2026 sheet:
 |---|---|---|
 | Standard | 2 | 1 |
 | First Week Advantage | 5 | 2 |
+
+### Points by rank and Gear 5
+
+Every week scores two numbers: points for an exact spot and points if the title is on the chart elsewhere. Pass
+`rank_multipliers` to `/new-event`, `/event-template` or `/set-points` to make chosen ranks pay more: `5:5` makes
+rank 5 pay 5x, and `5:5, 1:2` sets two ranks (`rank:factor`, ranks 1-10, factor 0-100 as a whole number). With 2 and 1 as
+the base numbers, `5:5` means an exact rank 5 pick earns 10 and one that is on the chart in another spot earns 5. A
+rank's points belong to the slot a member picked it in, and the announcement lists the weighted ranks under "Points by
+rank". Templates only store the two base numbers. `/set-points` replaces the whole matrix (it says so if it resets
+one), so repeat `rank_multipliers` there to keep it. The Minority Multiplier only ever touches ranks 1-3.
+
+**Gear 5** (`week_type: gear 5`) is a ready-made version: rank 5 pays 5x, with its own announcement line. It combines
+with `rank_multipliers` (what you type wins for that rank) and `/set-points` keeps rank 5 at 5x. In code it is an
+event type with `position_multipliers`, so a new weighted event is one entry in `event_types.py`.
 
 ### Ups and Downs weeks
 
@@ -227,6 +241,16 @@ fields (`check`), reasons it can't start or be scored yet (`start_problem`, `sco
 `/new-event` by itself. `tests/test_pick_fields.py` has a made-up "Bonus Round" event doing all of this as a template.
 
 **A new season rule** goes in `season_rules.py` (see Season rules above).
+
+## Check-in DMs (is the bot alive?)
+
+The bot DMs its owner (whoever owns its Discord application; set `ALERT_USER_ID` for someone else) when it starts, every
+24 hours after that, and when it shuts down cleanly (a stop signal from the host). Each message says how long it's been up,
+what event is open with how many submissions, and when the last backup was. A bot can't report that it has died, so the
+real warning is a check-in that doesn't arrive: no message for a day means the bot or its host is down. A crash or a
+host that kills the process won't send the goodbye, which is exactly when the missing check-in matters. Discord must
+allow DMs from server members for it to arrive; `/help-admin` shows when the last one was sent or why one failed, and
+`HEARTBEAT_DM=off` turns it off. To find out within minutes instead of a day, an outside uptime monitor is needed.
 
 ## Limits worth knowing
 

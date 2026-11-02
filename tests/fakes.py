@@ -30,9 +30,17 @@ class FakeUser:
         self.display_name = name.title()
         self.guild_permissions = FakePerms(manage_guild=manage_guild)
         self.roles = [FakeRole(r) for r in roles]
+        self.dms = []
+        self.forbid_dm = False
 
     def __str__(self):
         return self.name
+
+    async def send(self, content=None, **kw):
+        """A direct message to this user."""
+        if self.forbid_dm:
+            raise discord.Forbidden(type("R", (), {"status": 403, "reason": "forbidden"})(), "Cannot send messages to this user")
+        self.dms.append(content)
 
 
 class FakeGuild:
@@ -132,6 +140,10 @@ class FakeClient:
         self.guild = guild
         self.user = guild.me
         self.channels = {}
+        self.cogs = {}
+        self.owner = None
+        self.team = None
+        self.users = {}
 
     def add_channel(self, channel):
         self.channels[channel.id] = channel
@@ -146,6 +158,18 @@ class FakeClient:
         return self.channels[channel_id]
 
     def get_cog(self, name):
+        return self.cogs.get(name)
+
+    async def application_info(self):
+        import types
+        return types.SimpleNamespace(owner=self.owner, team=self.team)
+
+    async def fetch_user(self, user_id):
+        if user_id not in self.users:
+            raise discord.NotFound(type("R", (), {"status": 404, "reason": "nf"})(), "Unknown User")
+        return self.users[user_id]
+
+    async def wait_until_ready(self):
         return None
 
 
